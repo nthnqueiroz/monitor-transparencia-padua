@@ -3,42 +3,39 @@
 """
 Monitor do Portal da Transparência da Prefeitura de Santo Antônio de Pádua–RJ.
 
-O que faz:
-  - Varre todas as seções/secretarias do portal (auto-descoberta + lista fixa).
-  - Extrai todos os documentos (PDFs) publicados por seção/ano.
-  - Compara com o estado da última verificação (state/seen.json).
-  - Se houver documento NOVO, avisa por e-mail e/ou WhatsApp (CallMeBot).
-  - No primeiro run, apenas registra a "baseline" (não dispara alerta de tudo).
-  - Detecta se o site caiu ou mudou de estrutura e avisa em vez de ficar mudo.
+COBERTURA (v2 — completa):
+  - Todas as seções/secretarias em /portal/arquivo/{id}, entrando RECURSIVAMENTE
+    nas pastas de ano e de mês (ano -> mês -> documentos).
+  - Licitações (/licitacao) com paginação (?page=N).
+  - Páginas especiais que hospedam arquivos (Estrutura, e-SIC, Dúvidas).
 
-Só depende de: requests, beautifulsoup4  (ver requirements.txt)
+DOIS MODOS (variável de ambiente SCAN_MODE):
+  - "recent" (padrão, usado no agendamento diário): varre só o ano atual e o
+    anterior (com todos os meses) + primeiras páginas de licitação. Rápido.
+    Suficiente para pegar todo documento NOVO.
+  - "full": varre TODOS os anos de todas as seções + todas as licitações.
+    Use uma vez para montar o inventário histórico completo (inventory.csv/json)
+    e a baseline inicial. É bem mais demorado.
 
-Configuração por variáveis de ambiente (ver README.md):
-  # E-mail (Gmail recomendado)
-  EMAIL_ENABLED=true
-  SMTP_HOST=smtp.gmail.com
-  SMTP_PORT=587
-  SMTP_USER=seuemail@gmail.com
-  SMTP_PASS=app_password_de_16_digitos
-  EMAIL_TO=destino@gmail.com          # pode ser o mesmo do SMTP_USER
+SAÍDAS:
+  - state/seen.json : memória do que já foi visto (não apagar).
+  - inventory.csv / inventory.json : inventário de tudo que já foi catalogado.
+  - Notificações por e-mail e WhatsApp quando surge documento NOVO.
 
-  # WhatsApp via CallMeBot (grátis)
-  WHATSAPP_ENABLED=true
-  CALLMEBOT_PHONE=+5522999999999
-  CALLMEBOT_APIKEY=123456
+Configuração por variáveis de ambiente (ver README.md).
 """
 
 import os
 import re
 import sys
+import csv
 import json
 import time
-import html
 import smtplib
 import datetime
 from email.mime.text import MIMEText
 from email.header import Header
-from urllib.parse import urljoin, quote_plus
+from urllib.parse import urljoin, urlparse, unquote, quote_plus
 
 import requests
 from bs4 import BeautifulSoup
@@ -48,69 +45,64 @@ from bs4 import BeautifulSoup
 # ---------------------------------------------------------------------------
 
 BASE = "https://santoantoniodepadua.rj.gov.br"
-# Página que lista o menu da transparência (usada para auto-descobrir seções).
 INDEX_URL = f"{BASE}/portal/transparencia"
-# Padrão de URL de cada seção: /portal/arquivo/{id}/{ano}
-SECTION_URL = BASE + "/portal/arquivo/{sid}/{year}"
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), "state", "seen.json")
+INVENTORY_CSV = os.path.join(os.path.dirname(__file__), "inventory.csv")
+INVENTORY_JSON = os.path.join(os.path.dirname(__file__), "inventory.json")
 
-# Quais anos varrer em cada seção. Mantemos o ano atual e o anterior para
-# pegar documentos publicados de forma retroativa. Ajuste se quiser.
-NOW = datetime.datetime.utcnow()
-YEARS = [NOW.year, NOW.year - 1]
+NOW = datetime.datetime.now(datetime.timezone.utc)
+NOW_ISO = NOW.replace(microsecond=0).isoformat()
+# Anos varridos no modo "recent" (diário): atual + anterior.
+RECENT_YEARS = {NOW.year, NOW.year - 1}
 
-# Espera entre requisições (segundos) para não sobrecarregar o servidor.
-REQUEST_DELAY = 0.6
+REQUEST_DELAY = float(os.environ.get("REQUEST_DELAY", "0.4"))
 REQUEST_TIMEOUT = 30
+# Trava de segurança: máximo de páginas por seção (evita loop infinito).
+MAX_PAGES_PER_SECTION = int(os.environ.get("MAX_PAGES_PER_SECTION", "1500"))
 USER_AGENT = (
-    "Mozilla/5.0 (compatible; MonitorTransparenciaPadua/1.0; "
+    "Mozilla/5.0 (compatible; MonitorTransparenciaPadua/2.0; "
     "monitoramento civico de documentos publicos)"
 )
 
-# Seções conhecidas (id -> nome). A auto-descoberta complementa esta lista,
-# então se a prefeitura criar uma secretaria nova ela entra sozinha.
+FILE_EXT = re.compile(
+    r"\.(pdf|docx?|xlsx?|pptx?|odt|ods|csv|txt|zip|rar|7z|png|jpe?g|gif)$", re.I
+)
+MONTHS = {
+    "janeiro", "fevereiro", "marco", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+}
+
+# Seções conhecidas (id -> nome). A auto-descoberta complementa esta lista.
 SECTIONS = {
-    1:  "LEIS",
-    2:  "DECRETOS",
-    3:  "ATOS",
-    4:  "PORTARIAS",
-    5:  "LRF",
-    6:  "DEMUT",
-    8:  "SECRETARIA DE EDUCACAO",
-    9:  "SECRETARIA DE ADMINISTRACAO",
-    12: "TRANSPARENCIA COVID-19",
-    13: "CONTROLE INTERNO",
-    14: "SECRETARIA DE ASSISTENCIA SOCIAL",
-    15: "SECRETARIA DE FAZENDA",
-    16: "EDITAIS",
-    17: "FOLHA DE PAGAMENTO",
-    18: "SECRETARIA DE INDUSTRIA, COMERCIO E RECURSOS MINERAIS",
-    19: "FAP",
-    20: "SECRETARIA DE MEIO AMBIENTE",
-    24: "CONVENIOS/CONTRATOS",
-    25: "SECRETARIA DE SAUDE",
-    26: "SECRETARIA DE TRANSPORTES",
-    27: "SECRETARIA DE OBRAS",
-    28: "CHEFIA DE GABINETE",
-    29: "SECRETARIA DE SEGURANCA PUBLICA",
-    30: "SECRETARIA DE AGRICULTURA",
-    31: "SECRETARIA DE TURISMO",
-    32: "SECRETARIA DE ESPORTES",
-    33: "PROCURADORIA",
-    34: "SECRETARIA DE CULTURA",
-    35: "SECRETARIA DE ILUMINACAO PUBLICA",
-    36: "AGUA E ESGOTO",
-    37: "SECRETARIA DEFESA CIVIL",
-    39: "LEIS ORCAMENTARIAS",
-    40: "PLANEJAMENTO DE CONTRATACOES",
-    41: "NOTA FISCAL NACIONAL",
+    1: "LEIS", 2: "DECRETOS", 3: "ATOS", 4: "PORTARIAS", 5: "LRF", 6: "DEMUT",
+    8: "SECRETARIA DE EDUCACAO", 9: "SECRETARIA DE ADMINISTRACAO",
+    12: "TRANSPARENCIA COVID-19", 13: "CONTROLE INTERNO",
+    14: "SECRETARIA DE ASSISTENCIA SOCIAL", 15: "SECRETARIA DE FAZENDA",
+    16: "EDITAIS", 17: "FOLHA DE PAGAMENTO",
+    18: "SECRETARIA DE INDUSTRIA, COMERCIO E RECURSOS MINERAIS", 19: "FAP",
+    20: "SECRETARIA DE MEIO AMBIENTE", 24: "CONVENIOS/CONTRATOS",
+    25: "SECRETARIA DE SAUDE", 26: "SECRETARIA DE TRANSPORTES",
+    27: "SECRETARIA DE OBRAS", 28: "CHEFIA DE GABINETE",
+    29: "SECRETARIA DE SEGURANCA PUBLICA", 30: "SECRETARIA DE AGRICULTURA",
+    31: "SECRETARIA DE TURISMO", 32: "SECRETARIA DE ESPORTES",
+    33: "PROCURADORIA", 34: "SECRETARIA DE CULTURA",
+    35: "SECRETARIA DE ILUMINACAO PUBLICA", 36: "AGUA E ESGOTO",
+    37: "SECRETARIA DEFESA CIVIL", 39: "LEIS ORCAMENTARIAS",
+    40: "PLANEJAMENTO DE CONTRATACOES", 41: "NOTA FISCAL NACIONAL",
     43: "EMENDAS PARLAMENTARES",
 }
 
+# Páginas especiais (fora do padrão /arquivo) que podem ter arquivos anexados.
+SPECIAL_PAGES = [
+    ("ESTRUTURA ADMINISTRATIVA", f"{BASE}/portal/estrutura"),
+    ("E-SIC", f"{BASE}/esic"),
+    ("DUVIDAS FREQUENTES", f"{BASE}/portal/duvidas"),
+]
+
 
 # ---------------------------------------------------------------------------
-# HTTP helper
+# HTTP + parsing helpers
 # ---------------------------------------------------------------------------
 
 def make_session():
@@ -125,106 +117,225 @@ def fetch(session, url):
         r = session.get(url, timeout=REQUEST_TIMEOUT)
         if r.status_code == 200:
             return r.text, True
-        # 404 é normal (seção sem aquele ano) -> ok=True, conteúdo vazio.
         if r.status_code == 404:
-            return "", True
-        print(f"  [aviso] {url} respondeu HTTP {r.status_code}")
+            return "", True  # 404 é normal (ano/mês inexistente)
+        print(f"  [aviso] {url} -> HTTP {r.status_code}")
         return "", False
     except requests.RequestException as e:
         print(f"  [erro] falha ao acessar {url}: {e}")
         return "", False
 
 
+def parse_links(text, base_url):
+    """Retorna lista de (abs_url, texto_do_link, tag_a)."""
+    out = []
+    soup = BeautifulSoup(text, "html.parser")
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if (not href or href.startswith("#")
+                or href.lower().startswith("javascript:")
+                or href.lower().startswith("mailto:")):
+            continue
+        abs_url = urljoin(base_url, href)
+        title = " ".join(a.get_text(strip=True).split())
+        out.append((abs_url, title, a))
+    return out
+
+
+def is_file(url):
+    clean = url.split("?")[0].split("#")[0]
+    return bool(FILE_EXT.search(clean))
+
+
+def path_of(url):
+    return urlparse(url).path
+
+
+def parse_year_month(path, prefix):
+    """Extrai ano e mês (se houver) dos segmentos após o prefixo da seção."""
+    seg = [unquote(s) for s in path[len(prefix):].split("/") if s]
+    year = month = None
+    for s in seg:
+        if re.fullmatch(r"\d{4}", s):
+            year = s
+        elif s.lower() in MONTHS:
+            month = s
+    return year, month
+
+
 # ---------------------------------------------------------------------------
-# Descoberta de seções e extração de documentos
+# Descoberta de seções
 # ---------------------------------------------------------------------------
 
 def discover_sections(session):
-    """Lê o menu da transparência e descobre IDs de seção automaticamente.
-    Faz UNIÃO com a lista fixa SECTIONS. Se a descoberta falhar, usamos só
-    a lista fixa (o monitor continua funcionando)."""
     sections = dict(SECTIONS)
     text, ok = fetch(session, INDEX_URL)
-    if not ok or not text:
+    if ok and text:
+        for abs_url, atext, _ in parse_links(text, INDEX_URL):
+            m = re.search(r"/portal/arquivo/(\d+)(?:/|$)", abs_url)
+            if not m:
+                continue
+            sid = int(m.group(1))
+            name = atext or f"SECAO {sid}"
+            if sid not in sections or (name and not name.startswith("SECAO")):
+                sections[sid] = name
+    else:
         print("  [aviso] nao consegui auto-descobrir secoes; usando lista fixa.")
-        return sections
-
-    soup = BeautifulSoup(text, "html.parser")
-    for a in soup.find_all("a", href=True):
-        m = re.search(r"/portal/arquivo/(\d+)", a["href"])
-        if not m:
-            continue
-        sid = int(m.group(1))
-        name = " ".join(a.get_text(strip=True).split()) or f"SECAO {sid}"
-        # Só sobrescreve o nome se ainda não tínhamos ou se o descoberto é melhor.
-        if sid not in sections or (name and not name.startswith("SECAO")):
-            sections[sid] = name
     return sections
 
 
-def extract_documents(text, page_url):
-    """Extrai todos os documentos (links de arquivo) de uma página de seção.
-    Retorna lista de dicts {url, title}. Robusto: pega qualquer <a> cujo href
-    aponte para um arquivo (pdf/doc/xls/etc.) dentro de /portal/arquivo/."""
-    docs = []
-    if not text:
-        return docs
-    soup = BeautifulSoup(text, "html.parser")
-    file_ext = re.compile(r"\.(pdf|docx?|xlsx?|odt|ods|csv|zip|rar|txt|png|jpe?g)$", re.I)
-    seen_local = set()
-    for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
-        if not href:
+# ---------------------------------------------------------------------------
+# Crawlers
+# ---------------------------------------------------------------------------
+
+def crawl_arquivo_section(session, sid, name, years_allowed, stats):
+    """Crawl recursivo dentro de /portal/arquivo/{sid}: entra em anos e meses
+    e coleta todos os arquivos. years_allowed=None => todos os anos."""
+    docs = {}
+    prefix = f"/portal/arquivo/{sid}"
+    root = BASE + prefix
+    queue = [root]
+    enqueued = {root}
+    visited = set()
+    pages = 0
+
+    while queue and pages < MAX_PAGES_PER_SECTION:
+        url = queue.pop()
+        base = url.split("#")[0]
+        if base in visited:
             continue
-        abs_url = urljoin(page_url, href)
-        # Só nos interessam arquivos de documento hospedados no portal.
-        if "/portal/arquivo/" not in abs_url:
+        visited.add(base)
+        text, ok = fetch(session, url)
+        pages += 1
+        stats["pages"] += 1
+        time.sleep(REQUEST_DELAY)
+        if not ok or not text:
             continue
-        if not file_ext.search(abs_url.split("?")[0]):
-            continue
-        if abs_url in seen_local:
-            continue
-        seen_local.add(abs_url)
-        title = " ".join(a.get_text(strip=True).split())
-        if not title:
-            title = abs_url.rsplit("/", 1)[-1]
-        docs.append({"url": abs_url, "title": title})
+
+        for abs_url, atext, _ in parse_links(text, url):
+            p = path_of(abs_url)
+            # Só o que está dentro desta seção (respeitando limite de palavra:
+            # seção 4 não pode casar com 40/41/43).
+            if not (p == prefix or p.startswith(prefix + "/")):
+                continue
+
+            if is_file(abs_url):
+                if abs_url not in docs:
+                    year, month = parse_year_month(p, prefix)
+                    docs[abs_url] = {
+                        "title": atext or unquote(abs_url.rsplit("/", 1)[-1]),
+                        "section": name, "section_id": sid,
+                        "year": year, "month": month, "category": "arquivo",
+                    }
+                continue
+
+            # É pasta (ano/mês). Filtra ano quando aplicável.
+            seg = [s for s in p[len(prefix):].split("/") if s]
+            if len(seg) == 1 and re.fullmatch(r"\d{4}", seg[0]):
+                if years_allowed is not None and int(seg[0]) not in years_allowed:
+                    continue
+            b = abs_url.split("#")[0]
+            if b not in visited and b not in enqueued:
+                enqueued.add(b)
+                queue.append(abs_url)
+
+    if pages >= MAX_PAGES_PER_SECTION:
+        print(f"  [aviso] secao {sid} atingiu o limite de {MAX_PAGES_PER_SECTION} paginas.")
     return docs
 
 
-def scan(session, sections):
-    """Varre todas as seções e anos. Retorna:
-       found: dict url -> {title, section, section_id, year}
-       stats: métricas do run para detectar falhas."""
+def crawl_licitacoes(session, max_pages, stats):
+    """Coleta as licitações (cada linha -> /licitacao/abrir/{id}) paginando."""
+    items = {}
+    for page in range(1, max_pages + 1):
+        url = f"{BASE}/licitacao?page={page}"
+        text, ok = fetch(session, url)
+        stats["pages"] += 1
+        time.sleep(REQUEST_DELAY)
+        if not ok or not text:
+            break
+        found_here = 0
+        soup = BeautifulSoup(text, "html.parser")
+        for a in soup.find_all("a", href=True):
+            abs_url = urljoin(url, a["href"])
+            m = re.search(r"/licitacao/abrir/(\d+)", abs_url)
+            if not m:
+                continue
+            lid = m.group(1)
+            key = f"{BASE}/licitacao/abrir/{lid}"
+            if key in items:
+                continue
+            row = a.find_parent("tr")
+            if row:
+                title = " ".join(row.get_text(" ", strip=True).split())[:200]
+            else:
+                title = a.get_text(strip=True)
+            if not title:
+                title = f"Licitacao {lid}"
+            items[key] = {
+                "title": title, "section": "LICITACOES",
+                "category": "licitacao", "section_id": None,
+                "year": None, "month": None,
+            }
+            found_here += 1
+        if found_here == 0:
+            break  # acabou a lista
+    return items
+
+
+def crawl_special(session, name, url, stats):
+    """Extrai arquivos anexados de uma página avulsa (sem recursão profunda)."""
+    docs = {}
+    text, ok = fetch(session, url)
+    stats["pages"] += 1
+    time.sleep(REQUEST_DELAY)
+    if not ok or not text:
+        return docs
+    for abs_url, atext, _ in parse_links(text, url):
+        if is_file(abs_url):
+            docs[abs_url] = {
+                "title": atext or unquote(abs_url.rsplit("/", 1)[-1]),
+                "section": name, "section_id": None,
+                "year": None, "month": None, "category": "pagina",
+            }
+    return docs
+
+
+def scan(session, sections, mode):
     found = {}
-    stats = {"sections_ok": 0, "sections_fail": 0, "pages": 0}
+    stats = {"pages": 0, "sections_ok": 0, "sections_fail": 0}
+    years_allowed = None if mode == "full" else set(RECENT_YEARS)
+
     for sid, name in sorted(sections.items()):
-        section_had_success = False
-        for year in YEARS:
-            url = SECTION_URL.format(sid=sid, year=year)
-            text, ok = fetch(session, url)
-            stats["pages"] += 1
-            if ok:
-                section_had_success = True
-                for doc in extract_documents(text, url):
-                    if doc["url"] not in found:
-                        found[doc["url"]] = {
-                            "title": doc["title"],
-                            "section": name,
-                            "section_id": sid,
-                            "year": year,
-                        }
-            time.sleep(REQUEST_DELAY)
-        if section_had_success:
+        d = crawl_arquivo_section(session, sid, name, years_allowed, stats)
+        if d:
             stats["sections_ok"] += 1
         else:
             stats["sections_fail"] += 1
-            print(f"  [aviso] secao {sid} ({name}) falhou em todos os anos.")
+        found.update(d)
+        print(f"  secao {sid:>3} {name}: {len(d)} arquivos")
+
+    if env_bool("SPECIAL_ENABLED", True):
+        for nm, u in SPECIAL_PAGES:
+            sp = crawl_special(session, nm, u, stats)
+            found.update(sp)
+            if sp:
+                print(f"  especial {nm}: {len(sp)} arquivos")
+
+    if env_bool("LICITACOES_ENABLED", True):
+        if mode == "full":
+            maxp = int(os.environ.get("LICITACOES_MAX_PAGES", "200"))
+        else:
+            maxp = int(os.environ.get("LICITACOES_RECENT_PAGES", "3"))
+        lic = crawl_licitacoes(session, maxp, stats)
+        found.update(lic)
+        print(f"  licitacoes: {len(lic)} itens")
+
     return found, stats
 
 
 # ---------------------------------------------------------------------------
-# Estado (persistência)
+# Estado + inventário
 # ---------------------------------------------------------------------------
 
 def load_state():
@@ -242,9 +353,36 @@ def load_state():
 
 def save_state(state):
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-    state["last_run_utc"] = NOW.replace(microsecond=0).isoformat() + "Z"
+    state["last_run_utc"] = NOW_ISO
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def write_inventory(documents):
+    """Gera inventory.csv e inventory.json a partir da memória cumulativa."""
+    rows = sorted(
+        documents.items(),
+        key=lambda kv: (
+            kv[1].get("category", ""), kv[1].get("section", ""),
+            str(kv[1].get("year") or ""), kv[1].get("title", ""),
+        ),
+    )
+    with open(INVENTORY_CSV, "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["categoria", "secao", "ano", "mes", "titulo", "url"])
+        for url, m in rows:
+            w.writerow([
+                m.get("category", ""), m.get("section", ""),
+                m.get("year") or "", m.get("month") or "",
+                m.get("title", ""), url,
+            ])
+    with open(INVENTORY_JSON, "w", encoding="utf-8") as f:
+        json.dump(
+            {"total": len(documents), "generated_utc": NOW_ISO, "documents": documents},
+            f, ensure_ascii=False, indent=2, sort_keys=True,
+        )
+    print(f"  inventario atualizado: {len(documents)} documentos "
+          f"(inventory.csv / inventory.json)")
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +429,6 @@ def send_whatsapp(body_text):
     if not (phone and apikey):
         print("  [aviso] WHATSAPP_ENABLED mas faltam CALLMEBOT_PHONE/CALLMEBOT_APIKEY.")
         return
-    # CallMeBot tem limite de tamanho; cortamos com folga.
     text = body_text
     if len(text) > 900:
         text = text[:880] + "\n... (lista completa no e-mail)"
@@ -301,10 +438,11 @@ def send_whatsapp(body_text):
     )
     try:
         r = requests.get(url, timeout=30)
+        body = (r.text or "")[:200].replace("\n", " ")
         if r.status_code == 200:
-            print("  [ok] WhatsApp enviado.")
+            print(f"  [ok] WhatsApp enviado. Resposta CallMeBot: {body}")
         else:
-            print(f"  [aviso] CallMeBot respondeu HTTP {r.status_code}: {r.text[:200]}")
+            print(f"  [aviso] CallMeBot HTTP {r.status_code}: {body}")
     except requests.RequestException as e:
         print(f"  [erro] falha ao enviar WhatsApp: {e}")
 
@@ -314,45 +452,40 @@ def notify(subject, body_text):
     send_whatsapp(body_text)
 
 
-# ---------------------------------------------------------------------------
-# Formatação das mensagens
-# ---------------------------------------------------------------------------
-
 def format_new_docs(new_docs):
-    """new_docs: lista de (url, meta). Monta corpo legível agrupado por seção."""
     by_section = {}
     for url, meta in new_docs:
-        by_section.setdefault(meta["section"], []).append((meta["title"], url, meta["year"]))
-    lines = [f"{len(new_docs)} documento(s) novo(s) no Portal da Transparencia de Santo Antonio de Padua:\n"]
+        by_section.setdefault(meta["section"], []).append(
+            (meta.get("year"), meta.get("title", ""), url)
+        )
+    lines = [f"{len(new_docs)} documento(s) novo(s) no Portal da Transparencia "
+             "de Santo Antonio de Padua:\n"]
     for section in sorted(by_section):
         lines.append(f"== {section} ==")
-        for title, url, year in by_section[section]:
-            lines.append(f"- [{year}] {title}")
+        for year, title, url in by_section[section]:
+            tag = f"[{year}] " if year else ""
+            lines.append(f"- {tag}{title}")
             lines.append(f"  {url}")
         lines.append("")
     return "\n".join(lines).strip()
 
 
 # ---------------------------------------------------------------------------
-# Detecção de falha / mudança de estrutura
+# Saúde
 # ---------------------------------------------------------------------------
 
 def health_check(found, stats, state):
-    """Retorna (ok, mensagem_alerta_ou_None).
-    Dispara alerta se: (a) todas as seções falharam, ou (b) já tínhamos
-    documentos no estado mas agora não achamos NENHUM (provável mudança de
-    estrutura ou site fora do ar)."""
     prev_count = len(state.get("documents", {}))
     if stats["sections_ok"] == 0:
         return False, (
             "ALERTA: o monitor nao conseguiu acessar NENHUMA secao do portal. "
-            "O site pode estar fora do ar. Nenhuma verificacao de documentos foi feita."
+            "O site pode estar fora do ar. Nenhuma verificacao foi feita."
         )
     if prev_count > 0 and len(found) == 0:
         return False, (
             "ALERTA: o monitor acessou o site mas nao encontrou NENHUM documento, "
-            f"sendo que na ultima vez havia {prev_count}. Isso normalmente indica "
-            "que o layout/estrutura do portal mudou e o script precisa de ajuste."
+            f"sendo que na ultima vez havia {prev_count}. Provavel mudanca de "
+            "estrutura do portal — o script precisa de ajuste."
         )
     return True, None
 
@@ -362,57 +495,56 @@ def health_check(found, stats, state):
 # ---------------------------------------------------------------------------
 
 def main():
-    print(f"== Monitor Transparencia Padua == {NOW.isoformat()}Z")
+    mode = os.environ.get("SCAN_MODE", "recent").strip().lower()
+    if mode not in ("recent", "full"):
+        mode = "recent"
+    print(f"== Monitor Transparencia Padua v2 == {NOW_ISO} | modo: {mode}")
+
     session = make_session()
-
     sections = discover_sections(session)
-    print(f"Secoes a monitorar: {len(sections)} | anos: {YEARS}")
+    print(f"Secoes a monitorar: {len(sections)} | "
+          f"anos: {'TODOS' if mode == 'full' else sorted(RECENT_YEARS)}")
 
-    found, stats = scan(session, sections)
-    print(f"Paginas verificadas: {stats['pages']} | "
-          f"secoes ok: {stats['sections_ok']} | falhas: {stats['sections_fail']} | "
-          f"documentos encontrados: {len(found)}")
+    found, stats = scan(session, sections, mode)
+    print(f"\nResumo: paginas={stats['pages']} | secoes ok={stats['sections_ok']} "
+          f"| falhas={stats['sections_fail']} | documentos encontrados={len(found)}")
 
     state = load_state()
 
-    # 1) Checagem de saúde antes de comparar (evita falso alarme quando o site cai).
     ok, alert = health_check(found, stats, state)
     if not ok:
         print(alert)
         notify("[Transparencia Padua] Monitor: possivel problema", alert)
-        # Não sobrescreve o estado para não "esquecer" os documentos conhecidos.
         return 1
 
-    # 2) Primeiro run: registra baseline sem alertar tudo.
     if not state.get("initialized"):
         state["documents"] = found
         state["initialized"] = True
         save_state(state)
+        write_inventory(state["documents"])
         msg = (
-            f"Monitor iniciado. Baseline registrada com {len(found)} documentos "
-            f"em {stats['sections_ok']} secoes. A partir de agora voce sera avisado "
-            "apenas quando surgir documento NOVO."
+            f"Monitor iniciado (modo {mode}). Baseline registrada com {len(found)} "
+            f"documentos. A partir de agora voce sera avisado apenas quando surgir "
+            "documento NOVO."
         )
         print(msg)
         notify("[Transparencia Padua] Monitor ativado", msg)
         return 0
 
-    # 3) Diff: o que é novo em relação ao estado salvo.
     known = state.get("documents", {})
-    new_docs = [(url, meta) for url, meta in found.items() if url not in known]
+    new_docs = [(u, m) for u, m in found.items() if u not in known]
 
-    # Atualiza o estado com tudo o que foi encontrado (adiciona os novos).
     merged = dict(known)
     merged.update(found)
     state["documents"] = merged
     save_state(state)
+    write_inventory(merged)
 
     if not new_docs:
         print("Nenhum documento novo.")
         return 0
 
-    # Ordena por seção e título para uma mensagem estável.
-    new_docs.sort(key=lambda x: (x[1]["section"], x[1]["title"]))
+    new_docs.sort(key=lambda x: (x[1]["section"], str(x[1].get("year") or ""), x[1]["title"]))
     body = format_new_docs(new_docs)
     subject = f"[Transparencia Padua] {len(new_docs)} documento(s) novo(s)"
     print(body)
