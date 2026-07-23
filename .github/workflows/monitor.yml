@@ -1,0 +1,56 @@
+name: Monitor Transparência Pádua
+
+# Roda 1x por dia às 11:00 UTC = 08:00 no horário de Brasília (America/Sao_Paulo, UTC-3).
+# Você também pode disparar manualmente pela aba "Actions" (workflow_dispatch).
+on:
+  schedule:
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+
+# Permite que o job faça commit do estado atualizado de volta no repositório.
+permissions:
+  contents: write
+
+concurrency:
+  group: monitor-transparencia
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar o monitor
+        env:
+          EMAIL_ENABLED: ${{ vars.EMAIL_ENABLED }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          EMAIL_TO: ${{ vars.EMAIL_TO }}
+          WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED }}
+          CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+        run: python monitor.py
+
+      - name: Salvar estado atualizado (commit)
+        run: |
+          git config user.name "monitor-bot"
+          git config user.email "monitor-bot@users.noreply.github.com"
+          git add state/seen.json
+          if git diff --staged --quiet; then
+            echo "Sem mudanças no estado."
+          else
+            git commit -m "Atualiza estado do monitor [skip ci]"
+            git push
+          fi
