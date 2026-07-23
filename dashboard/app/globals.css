@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+/*
+  Painel Interno de Transparência — Pádua Lab
+
+  A paleta é de registro público: papel cinza-frio, tinta azul de carimbo,
+  e um único âmbar reservado para a marca de dado pessoal (LGPD). Como o
+  âmbar é a única cor quente da interface, um documento sinalizado não
+  passa despercebido.
+
+  A rampa sequencial serve à matriz seção × ano e foi validada com o
+  script de paleta do guia de dataviz (matiz único, luminosidade monótona,
+  degraus visíveis sobre a superfície #FAFBFC).
+*/
+@theme {
+  --color-plano: #edf0f4;
+  --color-ficha: #fafbfc;
+  --color-ficha-alt: #f4f6f9;
+
+  --color-tinta: #12161c;
+  --color-tinta-2: #4a5563;
+  --color-tinta-3: #7a8595;
+
+  --color-linha: #dde3ea;
+  --color-linha-forte: #c6ced8;
+
+  --color-registro: #2a5a9c;
+  --color-registro-escuro: #1b4b84;
+  --color-registro-tenue: #eaf1f9;
+
+  --color-selo: #b45309;
+  --color-selo-fundo: #fdf3e7;
+  --color-selo-linha: #e3bd88;
+
+  --color-densidade-1: #cfe0f2;
+  --color-densidade-2: #9ec1e6;
+  --color-densidade-3: #6598d2;
+  --color-densidade-4: #356fb0;
+  --color-densidade-5: #1b4b84;
+
+  --font-sans: var(--fonte-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--fonte-mono), ui-monospace, monospace;
+  --font-serif: var(--fonte-serif), ui-serif, Georgia, serif;
+}
+
+body {
+  background-color: var(--color-plano);
+  color: var(--color-tinta);
+}
+
+/* Foco visível e consistente — o painel é operado muito pelo teclado. */
+:focus-visible {
+  outline: 2px solid var(--color-registro);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+::selection {
+  background-color: var(--color-registro-tenue);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Barra de rolagem discreta na tabela virtualizada. */
+.rolagem-fina {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-linha-forte) transparent;
+}
