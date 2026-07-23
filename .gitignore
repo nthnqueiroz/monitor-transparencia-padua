@@ -1,0 +1,28 @@
+# Node / Next.js (painel em dashboard/)
+node_modules/
+.next/
+out/
+build/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+
+# Cópia derivada do inventário — gerada por `npm run sync-data`.
+# O original vive na raiz do repo e é versionado pelo monitor.
+dashboard/public/inventory.csv
+
+# Ambiente
+.env
+.env.local
+.env*.local
+
+# Python (monitor)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Sistema
+.DS_Store
+Thumbs.db
+*.log
