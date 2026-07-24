@@ -1,12 +1,38 @@
 "use client";
 
-import { useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Chip, Destaque, SeloSensivel, Vazio } from "./primitivos";
+import { tomDoStatus } from "@/lib/paleta";
 import type { Doc } from "@/lib/tipos";
 import { nomeMes, numero, real } from "@/lib/texto";
 
-const ALTURA_LINHA = 78;
+type Ordem = "recente" | "antigo";
+type Densidade = "confortavel" | "compacto";
+
+const ALTURA_LINHA: Record<Densidade, number> = {
+  confortavel: 78,
+  compacto: 44,
+};
+
+/**
+ * Ano desc/asc conforme `ordem`, mês como desempate. Documentos sem ano
+ * identificável ficam sempre no fim — nas duas direções, porque "mais
+ * antigos primeiro" não deveria abrir com uma pilha de indatados.
+ */
+function compararDocs(a: Doc, b: Doc, ordem: Ordem): number {
+  const aSemAno = a.anoEfetivo === null;
+  const bSemAno = b.anoEfetivo === null;
+  if (aSemAno !== bSemAno) return aSemAno ? 1 : -1;
+  if (aSemAno) return 0;
+
+  const sinal = ordem === "recente" ? -1 : 1;
+  const anoA = a.anoEfetivo as number;
+  const anoB = b.anoEfetivo as number;
+  if (anoA !== anoB) return (anoA - anoB) * sinal;
+
+  return ((a.mes ?? 0) - (b.mes ?? 0)) * sinal;
+}
 
 export function TabelaDocumentos({
   docs,
@@ -15,15 +41,16 @@ export function TabelaDocumentos({
   docs: Doc[];
   termo: string;
 }) {
-  const container = useRef<HTMLDivElement>(null);
+  const [ordem, setOrdem] = useState<Ordem>("recente");
+  const [densidade, setDensidade] = useState<Densidade>("confortavel");
 
-  // 18 mil linhas não cabem no DOM: só o que está na viewport é montado.
-  const virtual = useVirtualizer({
-    count: docs.length,
-    getScrollElement: () => container.current,
-    estimateSize: () => ALTURA_LINHA,
-    overscan: 8,
-  });
+  // Padrão: mais recente primeiro. Só reordena quando `docs` ou `ordem`
+  // mudam — em 18 mil linhas o sort é barato (V8 usa TimSort, O(n log n)),
+  // mas não há motivo pra repetir a cada render.
+  const ordenados = useMemo(
+    () => [...docs].sort((a, b) => compararDocs(a, b, ordem)),
+    [docs, ordem],
+  );
 
   if (!docs.length) {
     return (
@@ -35,14 +62,102 @@ export function TabelaDocumentos({
   }
 
   return (
-    <div
-      ref={container}
-      className="rolagem-fina h-[calc(100vh-260px)] min-h-[420px] overflow-y-auto"
-    >
-      <div
-        style={{ height: virtual.getTotalSize(), position: "relative" }}
-        role="list"
+    <div className="flex h-[calc(100vh-260px)] min-h-[420px] flex-col">
+      <BarraTabela
+        ordem={ordem}
+        aoMudarOrdem={setOrdem}
+        densidade={densidade}
+        aoMudarDensidade={setDensidade}
+      />
+      {/* key força remontar o virtualizador ao trocar densidade — a altura
+          de linha muda, e é mais simples remedir do zero do que reconciliar. */}
+      <Lista key={densidade} docs={ordenados} termo={termo} densidade={densidade} />
+    </div>
+  );
+}
+
+function BarraTabela({
+  ordem,
+  aoMudarOrdem,
+  densidade,
+  aoMudarDensidade,
+}: {
+  ordem: Ordem;
+  aoMudarOrdem: (o: Ordem) => void;
+  densidade: Densidade;
+  aoMudarDensidade: (d: Densidade) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-linha px-4 py-2">
+      <button
+        type="button"
+        onClick={() => aoMudarOrdem(ordem === "recente" ? "antigo" : "recente")}
+        title="Documentos sem ano identificável ficam sempre no fim."
+        className="flex items-center gap-1.5 rounded border border-linha-forte bg-ficha px-2.5 py-1 text-[12px] font-medium text-tinta-2 hover:bg-ficha-alt"
       >
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 12 12"
+          className={`h-3 w-3 transition-transform ${ordem === "antigo" ? "rotate-180" : ""}`}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+        >
+          <path d="M3 4.5 6 1.5 9 4.5M6 1.5v9" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        {ordem === "recente" ? "Mais recentes primeiro" : "Mais antigos primeiro"}
+      </button>
+
+      <div
+        role="group"
+        aria-label="Densidade da lista"
+        className="flex overflow-hidden rounded border border-linha-forte"
+      >
+        {(["confortavel", "compacto"] as const).map((d, i) => (
+          <button
+            key={d}
+            type="button"
+            aria-pressed={densidade === d}
+            onClick={() => aoMudarDensidade(d)}
+            className={`px-2.5 py-1 text-[12px] font-medium transition-colors ${
+              i > 0 ? "border-l border-linha-forte" : ""
+            } ${
+              densidade === d
+                ? "bg-registro text-white"
+                : "bg-ficha text-tinta-2 hover:bg-ficha-alt"
+            }`}
+          >
+            {d === "confortavel" ? "Confortável" : "Compacto"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Lista({
+  docs,
+  termo,
+  densidade,
+}: {
+  docs: Doc[];
+  termo: string;
+  densidade: Densidade;
+}) {
+  const container = useRef<HTMLDivElement>(null);
+  const altura = ALTURA_LINHA[densidade];
+
+  // 18 mil linhas não cabem no DOM: só o que está na viewport é montado.
+  const virtual = useVirtualizer({
+    count: docs.length,
+    getScrollElement: () => container.current,
+    estimateSize: () => altura,
+    overscan: 8,
+  });
+
+  return (
+    <div ref={container} className="rolagem-fina flex-1 overflow-y-auto">
+      <div style={{ height: virtual.getTotalSize(), position: "relative" }} role="list">
         {virtual.getVirtualItems().map((item) => (
           <div
             key={item.key}
@@ -56,7 +171,12 @@ export function TabelaDocumentos({
               transform: `translateY(${item.start}px)`,
             }}
           >
-            <Linha doc={docs[item.index]} termo={termo} par={item.index % 2 === 1} />
+            <Linha
+              doc={docs[item.index]}
+              termo={termo}
+              par={item.index % 2 === 1}
+              compacto={densidade === "compacto"}
+            />
           </div>
         ))}
       </div>
@@ -64,25 +184,45 @@ export function TabelaDocumentos({
   );
 }
 
-function Linha({ doc, termo, par }: { doc: Doc; termo: string; par: boolean }) {
+function Linha({
+  doc,
+  termo,
+  par,
+  compacto,
+}: {
+  doc: Doc;
+  termo: string;
+  par: boolean;
+  compacto: boolean;
+}) {
   const lic = doc.licitacao;
   const principal = lic ? lic.objeto : doc.titulo;
 
   return (
     <article
-      className={`flex h-full items-start gap-3 border-b border-linha px-4 py-2.5 ${
-        par ? "bg-ficha-alt/60" : ""
-      }`}
+      className={`flex h-full items-start gap-3 border-b border-linha px-4 ${
+        compacto ? "py-1" : "py-2.5"
+      } ${par ? "bg-ficha-alt/60" : ""}`}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-2">
           {doc.sensivel ? <SeloSensivel marca={doc.sensivel} /> : null}
-          <h3 className="line-clamp-2 text-[13.5px] leading-snug text-tinta">
+          <h3
+            className={`leading-snug text-tinta ${
+              compacto ? "line-clamp-1 text-[12.5px]" : "line-clamp-2 text-[13.5px]"
+            }`}
+          >
             <Destaque texto={principal} termo={termo} />
           </h3>
         </div>
 
-        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-tinta-3">
+        <p
+          className={`mt-1 flex items-center gap-x-2 gap-y-0.5 font-mono text-tinta-3 ${
+            compacto
+              ? "flex-nowrap overflow-hidden text-ellipsis whitespace-nowrap text-[10px]"
+              : "flex-wrap text-[11px]"
+          }`}
+        >
           <span className="text-tinta-2">{doc.secao}</span>
           {doc.anoEfetivo !== null ? (
             <>
@@ -112,7 +252,7 @@ function Linha({ doc, termo, par }: { doc: Doc; termo: string; par: boolean }) {
               <span className="uppercase">{doc.extensao}</span>
             </>
           ) : null}
-          {doc.truncado ? (
+          {doc.truncado && !compacto ? (
             <>
               <Separador />
               <span
@@ -131,7 +271,9 @@ function Linha({ doc, termo, par }: { doc: Doc; termo: string; par: boolean }) {
         target="_blank"
         rel="noopener noreferrer"
         title={doc.titulo}
-        className="mt-0.5 inline-flex shrink-0 items-center gap-1 rounded border border-linha-forte bg-ficha px-2.5 py-1 text-[12px] font-medium text-tinta-2 transition-colors hover:border-registro hover:bg-registro-tenue hover:text-registro-escuro"
+        className={`mt-0.5 inline-flex shrink-0 items-center gap-1 rounded border border-linha-forte bg-ficha text-[12px] font-medium text-tinta-2 transition-colors hover:border-registro hover:bg-registro-tenue hover:text-registro-escuro ${
+          compacto ? "px-2 py-0.5" : "px-2.5 py-1"
+        }`}
       >
         Abrir
         <svg
@@ -183,19 +325,10 @@ function MetaLicitacao({ doc }: { doc: Doc }) {
       {lic.status ? (
         <>
           <Separador />
-          <Chip tom={destacaStatus(lic.status) ? "registro" : "neutro"}>
-            {lic.status}
-          </Chip>
+          <Chip tom={tomDoStatus(lic.status)}>{lic.status}</Chip>
         </>
       ) : null}
     </>
-  );
-}
-
-/** Certame sem disputa ou anulado costuma render pauta — fica em evidência. */
-function destacaStatus(status: string): boolean {
-  return ["Deserta", "Fracassada", "Revogada", "Anulada", "Cancelada"].includes(
-    status,
   );
 }
 

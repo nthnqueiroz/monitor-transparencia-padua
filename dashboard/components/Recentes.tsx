@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { Chip, Ficha, SeloSensivel, TituloFicha, Vazio } from "./primitivos";
 import { pegarRecentes } from "@/lib/filtros";
+import { tomDoStatus } from "@/lib/paleta";
 import type { Doc } from "@/lib/tipos";
 import { nomeMes, numero } from "@/lib/texto";
 
@@ -53,9 +54,9 @@ export function Recentes({ docs }: { docs: Doc[] }) {
       <div className="divide-y divide-linha">
         {grupos.map(([mes, lista]) => (
           <div key={String(mes)}>
-            <h3 className="bg-ficha-alt px-4 py-1.5 font-mono text-[10.5px] tracking-[0.12em] text-tinta-2 uppercase">
+            <h3 className="bg-ficha-alt px-4 py-1.5 font-display text-[11px] font-bold tracking-[0.08em] text-tinta-2 uppercase">
               {mes !== null ? `${nomeMes(mes)} de ${ano}` : `${ano} · sem mês`}
-              <span className="ml-2 text-tinta-3 normal-case">
+              <span className="ml-2 font-mono font-normal text-tinta-3 normal-case">
                 ({numero(lista.length)})
               </span>
             </h3>
@@ -78,7 +79,9 @@ export function Recentes({ docs }: { docs: Doc[] }) {
                       </span>
                     </span>
                     {doc.licitacao?.status ? (
-                      <Chip>{doc.licitacao.status}</Chip>
+                      <Chip tom={tomDoStatus(doc.licitacao.status)}>
+                        {doc.licitacao.status}
+                      </Chip>
                     ) : null}
                   </a>
                 </li>
