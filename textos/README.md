@@ -67,15 +67,18 @@ aqui também). Documento sinalizado tem o texto extraído e indexado (a busca
 precisa enxergar o conteúdo pra funcionar), mas o painel **não mostra o
 trecho** desses documentos — só avisa que existe e manda abrir o original.
 
-## Etapa B — OCR (opcional, não rodada)
+## Etapa B — OCR (rodada em 2026-07-24)
 
-`ocr_conteudo.py` é o gancho pronto pra rodar OCR nos documentos marcados
-`precisa_ocr`. **Não foi instalado nem rodado** — a Etapa A entrega valor
-sem nenhuma dependência de sistema. Pré-requisitos e como habilitar estão
-no topo do próprio arquivo (Tesseract + idioma português, Poppler,
-`pip install pytesseract pdf2image`).
+`ocr_conteudo.py` roda OCR nos documentos marcados `precisa_ocr`. Pré-requisitos
+(Tesseract + idioma português, Poppler, `pip install pytesseract pdf2image`) estão
+no topo do próprio arquivo. Já instalados e verificados nesta máquina — ver
+`estado.json` / `conteudo.json` para o resultado.
 
-## Retrato da 1ª rodada (2026-07-24)
+DPI de renderização: 200 (padrão do script) — testado contra alguns scans antes
+do lote completo, incluindo o decreto de tombamento da Ponte Raul Veiga, com boa
+legibilidade; não precisou subir pra 300.
+
+## Retrato da 1ª rodada (2026-07-24, Etapa A + Etapa B)
 
 400 documentos selecionados (100 de cada critério):
 
@@ -83,8 +86,8 @@ no topo do próprio arquivo (Tesseract + idioma português, Poppler,
 |---|---:|
 | Texto nativo (PDF) | 104 |
 | Texto de página (licitação) | 100 |
-| **Total com texto — buscável agora** | **204** |
-| Escaneado — aguarda OCR | 189 |
+| Texto via OCR (escaneados) | 189 |
+| **Total com texto — buscável agora** | **393** |
 | Erro (link quebrado no portal) | 7 |
 | Sinalizados LGPD | 38 |
 
