@@ -24,12 +24,28 @@ export function temFiltroAtivo(f: Filtros, anoMin: number, anoMax: number): bool
 }
 
 /**
- * Busca por todos os termos (E lógico), sem acento e sem caixa, sobre
- * título + seção. Em 18 mil linhas isso roda em poucos milissegundos, então
- * não vale a complexidade de manter um índice invertido no v1.
+ * Quebra a busca em grupos "OU" separados por `|`; dentro de cada grupo, as
+ * palavras são "E". `"rio pomba | enchente"` acha "rio pomba" OU "enchente".
+ * Sem `|` o comportamento é o de sempre: todas as palavras, todas E.
+ *
+ * Existe para os chips de tema do Lab (ver TEMAS_DO_LAB em BarraFiltros),
+ * mas fica exposta na própria caixa de busca — o usuário vê exatamente o
+ * que está sendo comparado e pode editar à mão.
+ */
+export function gruposDeBusca(termo: string): string[][] {
+  return termo
+    .split("|")
+    .map((grupo) => semAcento(grupo).trim().split(/\s+/).filter(Boolean))
+    .filter((grupo) => grupo.length > 0);
+}
+
+/**
+ * Filtra por categoria, seção, ano e busca (título + seção). Em 18 mil
+ * linhas isso roda em poucos milissegundos, então não vale a complexidade
+ * de manter um índice invertido no v1.
  */
 export function aplicarFiltros(docs: Doc[], f: Filtros): Doc[] {
-  const palavras = semAcento(f.termo).trim().split(/\s+/).filter(Boolean);
+  const grupos = gruposDeBusca(f.termo);
   const filtraCategoria = f.categorias.size > 0;
   const filtraSecao = f.secoes.size > 0;
 
@@ -44,15 +60,11 @@ export function aplicarFiltros(docs: Doc[], f: Filtros): Doc[] {
       continue;
     }
 
-    if (palavras.length) {
-      let casou = true;
-      for (const p of palavras) {
-        if (!doc.chaveBusca.includes(p)) {
-          casou = false;
-          break;
-        }
-      }
-      if (!casou) continue;
+    if (grupos.length) {
+      const casouAlgumGrupo = grupos.some((palavras) =>
+        palavras.every((p) => doc.chaveBusca.includes(p)),
+      );
+      if (!casouAlgumGrupo) continue;
     }
 
     saida.push(doc);

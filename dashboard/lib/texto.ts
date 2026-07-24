@@ -121,13 +121,15 @@ export function valorParaNumero(bruto: string): number | null {
 
 /**
  * Divide o texto nos trechos que casam com o termo, preservando a caixa
- * original. Compara sem acento, então "orcamento" acha "ORÇAMENTO".
+ * original. Compara sem acento, então "orcamento" acha "ORÇAMENTO". O `|`
+ * (grupos "OU" da busca — ver gruposDeBusca em lib/filtros.ts) vira espaço
+ * aqui: para grifo não importa E/OU, só quais palavras aparecem no texto.
  */
 export function fatiarPorTermo(
   texto: string,
   termo: string,
 ): { trecho: string; destaque: boolean }[] {
-  const alvo = semAcento(termo).trim();
+  const alvo = semAcento(termo.replace(/\|/g, " ")).trim();
   const palavras = alvo.split(/\s+/).filter(Boolean);
   if (!palavras.length) return [{ trecho: texto, destaque: false }];
 
