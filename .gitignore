@@ -7,20 +7,26 @@ build/
 *.tsbuildinfo
 next-env.d.ts
 
-# Cópia derivada do inventário — gerada por `npm run sync-data`.
-# O original vive na raiz do repo e é versionado pelo monitor.
+# Cópias derivadas — geradas por `npm run sync-data` / `npm run sync-conteudo`.
+# Os originais vivem na raiz do repo e em textos/, e são versionados lá.
 dashboard/public/inventory.csv
+dashboard/public/conteudo.json
 
 # Ambiente
 .env
 .env.local
 .env*.local
 
-# Python (monitor)
+# Python (monitor + textos/)
 __pycache__/
 *.pyc
 .venv/
 venv/
+
+# PDFs baixados pelo pipeline de extração — cache regenerável, não versiona.
+# textos/conteudo.json e textos/estado.json (o índice e o ledger) SÃO
+# versionados: são pequenos e caros de refazer (dependem de rede).
+textos/pdfs/
 
 # Sistema
 .DS_Store
