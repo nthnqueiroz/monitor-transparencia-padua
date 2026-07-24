@@ -11,6 +11,32 @@ const NOME_CATEGORIA: Record<string, string> = {
   pagina: "Páginas",
 };
 
+interface TemaDoLab {
+  rotulo: string;
+  /** Vai para a caixa de busca. `|` separa alternativas (OU) — ver gruposDeBusca em lib/filtros.ts. */
+  busca?: string;
+  /** Alterna a categoria em vez de preencher a busca. */
+  categoria?: Categoria;
+}
+
+/**
+ * Atalhos de pauta do Lab. Clicar preenche a busca (ou alterna a categoria);
+ * clicar de novo limpa. Editável — é só mudar este array.
+ *
+ * "Obras" usa só `busca: "obra"` porque a busca já cobre título E seção
+ * (chaveBusca = titulo + secao): "obra" acha tanto o texto quanto a seção
+ * SECRETARIA DE OBRAS, sem precisar de um filtro de seção à parte.
+ */
+const TEMAS_DO_LAB: TemaDoLab[] = [
+  { rotulo: "Pontes", busca: "ponte" },
+  { rotulo: "Enchentes / Rio Pomba", busca: "rio pomba | enchente | drenagem | cheia" },
+  { rotulo: "Saneamento", busca: "esgoto | saneamento | água" },
+  { rotulo: "Arborização", busca: "arboriza | árvore | poda" },
+  { rotulo: "Licitações", categoria: "licitacao" },
+  { rotulo: "Obras", busca: "obra" },
+  { rotulo: "Trânsito", busca: "trânsito | mobilidade | sinaliza" },
+];
+
 interface Props {
   filtros: Filtros;
   aoMudar: (parcial: Partial<Filtros>) => void;
@@ -87,6 +113,8 @@ export function BarraFiltros({
           </div>
         </div>
 
+        <ChipsDeTema filtros={filtros} aoMudar={aoMudar} />
+
         <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-tinta-3">
           <span>
             <strong className="font-semibold text-tinta">
@@ -157,6 +185,63 @@ function CampoBusca({
           /
         </kbd>
       ) : null}
+    </div>
+  );
+}
+
+function ChipsDeTema({
+  filtros,
+  aoMudar,
+}: {
+  filtros: Filtros;
+  aoMudar: (parcial: Partial<Filtros>) => void;
+}) {
+  function aoClicar(tema: TemaDoLab) {
+    if (tema.categoria) {
+      const proximo = new Set(filtros.categorias);
+      if (proximo.has(tema.categoria)) proximo.delete(tema.categoria);
+      else proximo.add(tema.categoria);
+      aoMudar({ categorias: proximo });
+      return;
+    }
+    if (tema.busca) {
+      aoMudar({ termo: filtros.termo === tema.busca ? "" : tema.busca });
+    }
+  }
+
+  function estaAtivo(tema: TemaDoLab): boolean {
+    if (tema.categoria) return filtros.categorias.has(tema.categoria);
+    return tema.busca !== undefined && filtros.termo === tema.busca;
+  }
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <span className="font-display text-[10px] font-bold tracking-[0.08em] text-tinta-3 uppercase">
+        Pautas do Lab
+      </span>
+      {TEMAS_DO_LAB.map((tema) => {
+        const ativo = estaAtivo(tema);
+        return (
+          <button
+            key={tema.rotulo}
+            type="button"
+            aria-pressed={ativo}
+            onClick={() => aoClicar(tema)}
+            title={
+              tema.busca
+                ? `Busca: ${tema.busca}`
+                : "Filtra por categoria Licitações"
+            }
+            className={`rounded-[3px] border px-2 py-1 text-[12px] font-medium transition-colors ${
+              ativo
+                ? "border-registro bg-registro-tenue text-registro-escuro"
+                : "border-linha-forte bg-ficha text-tinta-2 hover:bg-ficha-alt"
+            }`}
+          >
+            {tema.rotulo}
+          </button>
+        );
+      })}
     </div>
   );
 }
