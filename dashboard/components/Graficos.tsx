@@ -12,7 +12,12 @@ import {
   YAxis,
 } from "recharts";
 import { Ficha, TituloFicha } from "./primitivos";
-import { contarPorAno, contarPorCategoria, contarPorSecao } from "@/lib/filtros";
+import {
+  type Contagem,
+  contarPorAno,
+  contarPorCategoria,
+  contarPorSecao,
+} from "@/lib/filtros";
 import { PALETA } from "@/lib/paleta";
 import type { Doc } from "@/lib/tipos";
 import { numero } from "@/lib/texto";
@@ -40,7 +45,7 @@ function abreviarSecao(nome: string): string {
     .replace(/^SECRETARIA (DE|DA|DO)\s+/i, "SEC. ")
     .replace(/^PLANEJAMENTO DE\s+/i, "PLANEJ. ")
     .replace(/^LRF\(.*\)$/i, "LRF");
-  return curto.length > 23 ? `${curto.slice(0, 22)}…` : curto;
+  return curto.length > 20 ? `${curto.slice(0, 19)}…` : curto;
 }
 
 /** Caixa de dica única para todos os gráficos — texto em tinta, nunca na cor da série. */
@@ -142,6 +147,22 @@ export function DocumentosPorAno({
   );
 }
 
+/**
+ * Quando a 1ª seção passa de longe a 2ª, ela sozinha achata a escala e
+ * esconde a diferença entre as seções médias — que é o que importa para
+ * comparar secretarias entre si. Nesse caso ela sai do gráfico e vira um
+ * destaque à parte; o gráfico escala pelas próximas, que passam a ser
+ * comparáveis. Sem essa dominância, o corte de 12 do Top 12 já basta.
+ */
+function separarDominante(todas: Contagem[]): {
+  dominante: Contagem | null;
+  pool: Contagem[];
+} {
+  const [primeira, segunda] = todas;
+  const dominante = segunda && primeira.total > segunda.total * 2 ? primeira : null;
+  return { dominante, pool: dominante ? todas.slice(1) : todas };
+}
+
 export function DocumentosPorSecretaria({
   docs,
   aoSelecionar,
@@ -149,16 +170,20 @@ export function DocumentosPorSecretaria({
   docs: Doc[];
   aoSelecionar: (secao: string) => void;
 }) {
-  const { visiveis, restantes, totalRestante } = useMemo(() => {
+  const { dominante, visiveis, restantes, totalRestante } = useMemo(() => {
     const todas = contarPorSecao(docs);
-    const visiveis = todas.slice(0, 12);
-    const resto = todas.slice(12);
+    const { dominante, pool } = separarDominante(todas);
+    const visiveis = pool.slice(0, 12);
+    const resto = pool.slice(12);
     return {
+      dominante,
       visiveis,
       restantes: resto.length,
       totalRestante: resto.reduce((s, r) => s + r.total, 0),
     };
   }, [docs]);
+
+  const totalGeral = docs.length || 1;
 
   return (
     <Ficha>
@@ -171,6 +196,27 @@ export function DocumentosPorSecretaria({
       >
         Documentos por seção
       </TituloFicha>
+
+      {dominante ? (
+        <button
+          type="button"
+          onClick={() => aoSelecionar(dominante.chave)}
+          className="flex w-full items-center justify-between gap-3 border-b border-linha bg-ficha-alt px-4 py-2.5 text-left transition-colors hover:bg-registro-tenue"
+        >
+          <span className="text-[12px] leading-snug text-tinta-2">
+            <strong className="font-display font-bold tracking-[0.02em] text-tinta uppercase">
+              {dominante.chave}
+            </strong>{" "}
+            soma sozinha {((dominante.total / totalGeral) * 100).toFixed(0)}% do
+            recorte — fora da escala abaixo, para as demais seções ficarem
+            comparáveis entre si.
+          </span>
+          <span className="shrink-0 font-mono text-[15px] text-tinta tabular-nums">
+            {numero(dominante.total)}
+          </span>
+        </button>
+      ) : null}
+
       <div className="px-2 pt-4 pb-2">
         <ResponsiveContainer width="100%" height={340}>
           <BarChart
