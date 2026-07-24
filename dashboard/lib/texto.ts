@@ -120,10 +120,27 @@ export function valorParaNumero(bruto: string): number | null {
 }
 
 /**
+ * Quebra a busca em grupos "OU" separados por `|`; dentro de cada grupo, as
+ * palavras são "E". `"rio pomba | enchente"` acha "rio pomba" OU "enchente".
+ * Sem `|` o comportamento é o de sempre: todas as palavras, todas E.
+ *
+ * Existe para os chips de tema do Lab (ver TEMAS_DO_LAB em BarraFiltros) e
+ * para a busca no conteúdo (lib/conteudo.ts), mas fica exposta na própria
+ * caixa de busca — o usuário vê exatamente o que está sendo comparado e
+ * pode editar à mão.
+ */
+export function gruposDeBusca(termo: string): string[][] {
+  return termo
+    .split("|")
+    .map((grupo) => semAcento(grupo).trim().split(/\s+/).filter(Boolean))
+    .filter((grupo) => grupo.length > 0);
+}
+
+/**
  * Divide o texto nos trechos que casam com o termo, preservando a caixa
  * original. Compara sem acento, então "orcamento" acha "ORÇAMENTO". O `|`
- * (grupos "OU" da busca — ver gruposDeBusca em lib/filtros.ts) vira espaço
- * aqui: para grifo não importa E/OU, só quais palavras aparecem no texto.
+ * (grupos "OU" da busca — ver gruposDeBusca acima) vira espaço aqui: para
+ * grifo não importa E/OU, só quais palavras aparecem no texto.
  */
 export function fatiarPorTermo(
   texto: string,

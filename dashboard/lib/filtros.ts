@@ -1,9 +1,10 @@
-import type { Doc, Filtros } from "./tipos";
-import { semAcento } from "./texto";
+import type { Doc, Filtros, IndiceConteudo } from "./tipos";
+import { gruposDeBusca } from "./texto";
 
 export function filtrosVazios(anoDe: number, anoAte: number): Filtros {
   return {
     termo: "",
+    modoBusca: "titulo",
     categorias: new Set(),
     secoes: new Set(),
     anoDe,
@@ -15,6 +16,7 @@ export function filtrosVazios(anoDe: number, anoAte: number): Filtros {
 export function temFiltroAtivo(f: Filtros, anoMin: number, anoMax: number): boolean {
   return (
     f.termo.trim() !== "" ||
+    f.modoBusca === "conteudo" ||
     f.categorias.size > 0 ||
     f.secoes.size > 0 ||
     f.anoDe !== anoMin ||
@@ -24,30 +26,24 @@ export function temFiltroAtivo(f: Filtros, anoMin: number, anoMax: number): bool
 }
 
 /**
- * Quebra a busca em grupos "OU" separados por `|`; dentro de cada grupo, as
- * palavras são "E". `"rio pomba | enchente"` acha "rio pomba" OU "enchente".
- * Sem `|` o comportamento é o de sempre: todas as palavras, todas E.
+ * Filtra por categoria, seção, ano e busca. Em 18 mil linhas isso roda em
+ * poucos milissegundos, então não vale a complexidade de manter um índice
+ * invertido no v1.
  *
- * Existe para os chips de tema do Lab (ver TEMAS_DO_LAB em BarraFiltros),
- * mas fica exposta na própria caixa de busca — o usuário vê exatamente o
- * que está sendo comparado e pode editar à mão.
+ * No modo "conteudo", a busca troca de alvo — título+seção vira o texto
+ * extraído do documento (ver lib/conteudo.ts) — e só entram documentos que
+ * já têm texto indexado. Sem índice carregado, o modo conteúdo não devolve
+ * nada (é mais honesto que fingir cobertura que não existe).
  */
-export function gruposDeBusca(termo: string): string[][] {
-  return termo
-    .split("|")
-    .map((grupo) => semAcento(grupo).trim().split(/\s+/).filter(Boolean))
-    .filter((grupo) => grupo.length > 0);
-}
-
-/**
- * Filtra por categoria, seção, ano e busca (título + seção). Em 18 mil
- * linhas isso roda em poucos milissegundos, então não vale a complexidade
- * de manter um índice invertido no v1.
- */
-export function aplicarFiltros(docs: Doc[], f: Filtros): Doc[] {
+export function aplicarFiltros(
+  docs: Doc[],
+  f: Filtros,
+  indiceConteudo: IndiceConteudo | null = null,
+): Doc[] {
   const grupos = gruposDeBusca(f.termo);
   const filtraCategoria = f.categorias.size > 0;
   const filtraSecao = f.secoes.size > 0;
+  const modoConteudo = f.modoBusca === "conteudo";
 
   const saida: Doc[] = [];
   for (const doc of docs) {
@@ -60,7 +56,16 @@ export function aplicarFiltros(docs: Doc[], f: Filtros): Doc[] {
       continue;
     }
 
-    if (grupos.length) {
+    if (modoConteudo) {
+      const normalizado = indiceConteudo?.normalizadoPorUrl.get(doc.url);
+      if (normalizado === undefined) continue;
+      if (
+        grupos.length &&
+        !grupos.some((palavras) => palavras.every((p) => normalizado.includes(p)))
+      ) {
+        continue;
+      }
+    } else if (grupos.length) {
       const casouAlgumGrupo = grupos.some((palavras) =>
         palavras.every((p) => doc.chaveBusca.includes(p)),
       );

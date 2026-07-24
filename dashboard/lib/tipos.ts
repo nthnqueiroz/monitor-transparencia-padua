@@ -51,10 +51,59 @@ export interface Inventario {
 
 export interface Filtros {
   termo: string;
+  /** "titulo": busca em título+seção (padrão). "conteudo": busca no texto extraído dos PDFs. */
+  modoBusca: "titulo" | "conteudo";
   categorias: Set<string>;
   secoes: Set<string>;
   anoDe: number;
   anoAte: number;
   /** Inclui documentos sem ano identificável no resultado. */
   incluirSemAno: boolean;
+}
+
+/**
+ * Como o texto de um documento foi obtido — ver textos/extrair_conteudo.py.
+ *  - nativo / pagina_html / ocr: tem texto de verdade, buscável.
+ *  - precisa_ocr: PDF escaneado, sem camada de texto (Etapa B, futura).
+ *  - formato_nao_suportado: doc/xlsx/jpg etc — fora do escopo do extrator.
+ *  - erro: falha ao baixar ou extrair (ex.: link quebrado no portal).
+ */
+export type MetodoConteudo =
+  | "nativo"
+  | "pagina_html"
+  | "ocr"
+  | "precisa_ocr"
+  | "formato_nao_suportado"
+  | "erro";
+
+/** Uma entrada do índice de conteúdo (dashboard/public/conteudo.json). */
+export interface ConteudoDoc {
+  url: string;
+  metodo: MetodoConteudo;
+  chars: number;
+  paginas: number;
+  truncado: boolean;
+  sensivel: string | null;
+  texto: string;
+  erro: string | null;
+  motivo?: string;
+  processado_em?: string;
+}
+
+export interface ResumoConteudo {
+  total: number;
+  comTexto: number;
+  precisaOcr: number;
+  erro: number;
+  semSuporte: number;
+}
+
+/** Índice de conteúdo já carregado e indexado por URL, pronto para busca. */
+export interface IndiceConteudo {
+  geradoEm: string;
+  criterios: string[];
+  porUrl: Map<string, ConteudoDoc>;
+  /** Texto sem acento/caixa, pré-computado uma vez — evita renormalizar a cada busca. */
+  normalizadoPorUrl: Map<string, string>;
+  resumo: ResumoConteudo;
 }
