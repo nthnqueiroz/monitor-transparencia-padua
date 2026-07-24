@@ -57,7 +57,7 @@ function Dica({
 }) {
   if (!ativo || titulo === undefined || valor === undefined) return null;
   return (
-    <div className="rounded border border-linha-forte bg-ficha px-2.5 py-1.5 shadow-md">
+    <div className="rounded border border-linha-forte bg-ficha px-2.5 py-1.5 shadow-sm">
       <p className="text-[12px] font-medium text-tinta">{titulo}</p>
       <p className="font-mono text-[11px] text-tinta-2">
         {numero(valor)} {valor === 1 ? "documento" : "documentos"}

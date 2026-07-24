@@ -1,33 +1,37 @@
 /**
- * Cores usadas pelos gráficos.
+ * Cores usadas pelos gráficos e a lógica de tom dos status.
  *
  * O Recharts recebe cor por prop, não por classe, então estes valores
  * espelham os tokens de `app/globals.css`. Mudou lá, mude aqui.
  *
- * A rampa é sequencial de matiz único (azul, claro → escuro), validada
- * com o script de paleta do guia de dataviz sobre a superfície #FAFBFC:
- * luminosidade monótona, degraus ≥ 0,06 e desvio de matiz de 5°.
+ * Paleta oficial do Pádua Lab: blueprint (navy) + paper (offwhite quente) +
+ * ink, com vermelho reservado só para LGPD e amarelo só para grifo de busca.
+ *
+ * A rampa sequencial (blueprint, claro → escuro) foi validada com o script
+ * de paleta do guia de dataviz sobre a superfície #F3EFD9 (paper-100):
+ * luminosidade monótona, degraus ≥ 0,06, ponta clara acima do piso de 2:1.
  */
 export const PALETA = {
-  superficie: "#FAFBFC",
-  tinta: "#12161C",
-  tinta2: "#4A5563",
-  tinta3: "#7A8595",
-  grade: "#E4E9EF",
-  eixo: "#C6CED8",
-  registro: "#2A5A9C",
-  registroEscuro: "#1B4B84",
-  registroTenue: "#EAF1F9",
-  selo: "#B45309",
+  superficie: "#F3EFD9",
+  tinta: "#1C2A40",
+  tinta2: "#2F3E55",
+  tinta3: "#5C6776",
+  grade: "#D6D3BA",
+  eixo: "#5C6776",
+  registro: "#143E7A",
+  registroEscuro: "#08234A",
+  registroTenue: "#DEE5EE",
+  selo: "#D23A2B",
+  verde: "#4F7A3A",
 } as const;
 
-/** Cinco degraus para a matriz de densidade. */
+/** Cinco degraus para a matriz de densidade — família blueprint. */
 export const RAMPA = [
-  "#CFE0F2",
-  "#9EC1E6",
-  "#6598D2",
-  "#356FB0",
-  "#1B4B84",
+  "#95A4BB",
+  "#7290B2",
+  "#4B75A7",
+  "#28538C",
+  "#08234A",
 ] as const;
 
 /**
@@ -58,4 +62,17 @@ export function degrauDeDensidade(valor: number, limiares: number[]): number {
     if (valor <= limiares[i]) return i;
   }
   return limiares.length;
+}
+
+/**
+ * Tom do chip de status de licitação. Verde só para o desfecho positivo
+ * (Homologada) — o vermelho do Lab é reservado para LGPD, então um status
+ * problemático (deserta, revogada...) usa o realce azul, não vermelho.
+ */
+export function tomDoStatus(status: string): "sucesso" | "registro" | "neutro" {
+  if (status === "Homologada") return "sucesso";
+  if (["Deserta", "Fracassada", "Revogada", "Anulada", "Cancelada"].includes(status)) {
+    return "registro";
+  }
+  return "neutro";
 }

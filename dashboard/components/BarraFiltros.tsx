@@ -282,7 +282,7 @@ function SeletorSecoes({
       </button>
 
       {aberto ? (
-        <div className="absolute top-full left-0 z-30 mt-1 w-[300px] rounded border border-linha-forte bg-ficha shadow-lg">
+        <div className="absolute top-full left-0 z-30 mt-1 w-[300px] rounded border border-linha-forte bg-ficha shadow-sm">
           <div className="border-b border-linha p-2">
             <input
               autoFocus
@@ -303,7 +303,7 @@ function SeletorSecoes({
                   type="checkbox"
                   checked={selecionadas.has(s)}
                   onChange={() => alternar(s)}
-                  className="accent-[#2A5A9C]"
+                  className="accent-[#143E7A]"
                 />
                 <span className="truncate">{s}</span>
               </label>
@@ -397,7 +397,7 @@ function SeletorAno({
           type="checkbox"
           checked={incluirSemAno}
           onChange={(e) => aoMudar({ incluirSemAno: e.target.checked })}
-          className="accent-[#2A5A9C]"
+          className="accent-[#143E7A]"
         />
         sem ano
       </label>

@@ -1,28 +1,31 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, IBM_Plex_Sans, IBM_Plex_Serif } from "next/font/google";
+import { Inter, JetBrains_Mono, Oswald } from "next/font/google";
 import "./globals.css";
 
-// IBM Plex: desenhada para sistemas técnicos e institucionais. A mono
-// carrega todo o dado tabular (número de ato, ano, valor), o que faz a
-// listagem ler como registro em vez de feed.
-const sans = IBM_Plex_Sans({
+// Inter carrega corpo e tabela — é o que se lê em volume, então precisa
+// desaparecer atrás do conteúdo.
+const sans = Inter({
   variable: "--fonte-sans",
   subsets: ["latin", "latin-ext"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "600"],
   display: "swap",
 });
 
-const mono = IBM_Plex_Mono({
+// JetBrains Mono carrega todo o dado tabular (número de ato, ano, valor,
+// status): faz a listagem ler como registro em vez de feed.
+const mono = JetBrains_Mono({
   variable: "--fonte-mono",
   subsets: ["latin", "latin-ext"],
   weight: ["400", "500", "600"],
   display: "swap",
 });
 
-const serif = IBM_Plex_Serif({
-  variable: "--fonte-serif",
+// Oswald é o display do Lab: só o corte 700, sempre em caixa alta, reservado
+// para títulos e labels de seção — nunca para corpo de texto.
+const display = Oswald({
+  variable: "--fonte-display",
   subsets: ["latin", "latin-ext"],
-  weight: ["500", "600"],
+  weight: ["700"],
   display: "swap",
 });
 
@@ -39,7 +42,7 @@ export default function RootLayout({
   return (
     <html
       lang="pt-BR"
-      className={`${sans.variable} ${mono.variable} ${serif.variable} h-full antialiased`}
+      className={`${sans.variable} ${mono.variable} ${display.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col font-sans">{children}</body>
     </html>

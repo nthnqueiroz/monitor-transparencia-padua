@@ -135,7 +135,7 @@ export function Painel() {
                 type="button"
                 onClick={() => setAba(a.chave)}
                 aria-current={ativa ? "page" : undefined}
-                className={`-mb-px border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors ${
+                className={`-mb-px border-b-2 px-3 py-2.5 font-display text-[12.5px] font-bold tracking-[0.04em] uppercase transition-colors ${
                   ativa
                     ? "border-registro text-registro-escuro"
                     : "border-transparent text-tinta-3 hover:text-tinta-2"
@@ -197,10 +197,10 @@ function Cabecalho({ inventario }: { inventario: Inventario }) {
     <header className="border-b border-linha bg-ficha">
       <div className="mx-auto flex max-w-[1400px] flex-wrap items-end justify-between gap-x-6 gap-y-2 px-4 py-4 lg:px-6">
         <div>
-          <p className="font-mono text-[10.5px] tracking-[0.18em] text-tinta-3 uppercase">
+          <p className="font-display text-[10.5px] font-bold tracking-[0.16em] text-tinta-3 uppercase">
             Pádua Lab · uso interno
           </p>
-          <h1 className="mt-0.5 font-serif text-[22px] leading-tight font-semibold text-tinta">
+          <h1 className="mt-0.5 font-display text-[26px] leading-tight font-bold tracking-[0.01em] text-tinta uppercase">
             Painel de Transparência
           </h1>
           <p className="mt-0.5 text-[13px] text-tinta-2">
@@ -265,8 +265,8 @@ function AvisoLgpd({ total }: { total: number }) {
 function Carregando() {
   return (
     <div className="flex min-h-[70vh] flex-col items-center justify-center gap-3">
-      <div className="h-1 w-40 overflow-hidden rounded-full bg-linha">
-        <div className="h-full w-1/3 animate-[carrega_1.1s_ease-in-out_infinite] rounded-full bg-registro" />
+      <div className="h-1 w-40 overflow-hidden rounded-sm bg-linha">
+        <div className="h-full w-1/3 animate-[carrega_1.1s_ease-in-out_infinite] rounded-sm bg-registro" />
       </div>
       <p className="font-mono text-[12px] text-tinta-3">
         Lendo o inventário (~18 mil documentos)

@@ -29,7 +29,7 @@ export function TituloFicha({
 }) {
   return (
     <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-linha px-4 py-3">
-      <h2 className="font-mono text-[11px] font-medium tracking-[0.14em] text-tinta-2 uppercase">
+      <h2 className="font-display text-[12.5px] font-bold tracking-[0.05em] text-tinta-2 uppercase">
         {children}
       </h2>
       {auxiliar ? (
@@ -50,7 +50,7 @@ export function Destaque({ texto, termo }: { texto: string; termo: string }) {
         p.destaque ? (
           <mark
             key={i}
-            className="rounded-[2px] bg-registro-tenue px-[1px] text-registro-escuro"
+            className="rounded-[2px] bg-grifo px-[1px] text-grifo-texto"
           >
             {p.trecho}
           </mark>
@@ -90,12 +90,14 @@ export function Chip({
   tom = "neutro",
 }: {
   children: ReactNode;
-  tom?: "neutro" | "registro";
+  tom?: "neutro" | "registro" | "sucesso";
 }) {
   const cor =
     tom === "registro"
       ? "border-registro/25 bg-registro-tenue text-registro-escuro"
-      : "border-linha bg-ficha-alt text-tinta-2";
+      : tom === "sucesso"
+        ? "border-verde-linha bg-verde-fundo text-verde"
+        : "border-linha bg-ficha-alt text-tinta-2";
   return (
     <span
       className={`inline-flex items-center rounded-[3px] border px-1.5 py-[1px] font-mono text-[10px] tracking-wide uppercase ${cor}`}
