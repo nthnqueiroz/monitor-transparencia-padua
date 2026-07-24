@@ -3,8 +3,9 @@
 import { useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Chip, Destaque, SeloSensivel, Vazio } from "./primitivos";
+import { gerarTrecho, statusConteudo, type StatusConteudo } from "@/lib/conteudo";
 import { tomDoStatus } from "@/lib/paleta";
-import type { Doc } from "@/lib/tipos";
+import type { Doc, IndiceConteudo } from "@/lib/tipos";
 import { nomeMes, numero, real } from "@/lib/texto";
 
 type Ordem = "recente" | "antigo";
@@ -37,9 +38,13 @@ function compararDocs(a: Doc, b: Doc, ordem: Ordem): number {
 export function TabelaDocumentos({
   docs,
   termo,
+  modoConteudo,
+  indiceConteudo,
 }: {
   docs: Doc[];
   termo: string;
+  modoConteudo: boolean;
+  indiceConteudo: IndiceConteudo | null;
 }) {
   const [ordem, setOrdem] = useState<Ordem>("recente");
   const [densidade, setDensidade] = useState<Densidade>("confortavel");
@@ -56,7 +61,11 @@ export function TabelaDocumentos({
     return (
       <Vazio
         titulo="Nenhum documento com esses filtros."
-        dica="Tente um termo mais curto, amplie o intervalo de anos ou limpe os filtros de seção."
+        dica={
+          modoConteudo
+            ? "A busca no conteúdo só enxerga documentos já indexados. Tente um termo mais curto ou volte para título/seção."
+            : "Tente um termo mais curto, amplie o intervalo de anos ou limpe os filtros de seção."
+        }
       />
     );
   }
@@ -71,7 +80,14 @@ export function TabelaDocumentos({
       />
       {/* key força remontar o virtualizador ao trocar densidade — a altura
           de linha muda, e é mais simples remedir do zero do que reconciliar. */}
-      <Lista key={densidade} docs={ordenados} termo={termo} densidade={densidade} />
+      <Lista
+        key={densidade}
+        docs={ordenados}
+        termo={termo}
+        densidade={densidade}
+        modoConteudo={modoConteudo}
+        indiceConteudo={indiceConteudo}
+      />
     </div>
   );
 }
@@ -139,13 +155,19 @@ function Lista({
   docs,
   termo,
   densidade,
+  modoConteudo,
+  indiceConteudo,
 }: {
   docs: Doc[];
   termo: string;
   densidade: Densidade;
+  modoConteudo: boolean;
+  indiceConteudo: IndiceConteudo | null;
 }) {
   const container = useRef<HTMLDivElement>(null);
-  const altura = ALTURA_LINHA[densidade];
+  // No modo conteúdo a linha ganha uma 3ª linha de trecho — precisa de mais
+  // altura, senão o texto do trecho fica cortado pela linha seguinte.
+  const altura = ALTURA_LINHA[densidade] + (modoConteudo && densidade === "confortavel" ? 22 : 0);
 
   // 18 mil linhas não cabem no DOM: só o que está na viewport é montado.
   const virtual = useVirtualizer({
@@ -176,6 +198,8 @@ function Lista({
               termo={termo}
               par={item.index % 2 === 1}
               compacto={densidade === "compacto"}
+              modoConteudo={modoConteudo}
+              indiceConteudo={indiceConteudo}
             />
           </div>
         ))}
@@ -189,11 +213,15 @@ function Linha({
   termo,
   par,
   compacto,
+  modoConteudo,
+  indiceConteudo,
 }: {
   doc: Doc;
   termo: string;
   par: boolean;
   compacto: boolean;
+  modoConteudo: boolean;
+  indiceConteudo: IndiceConteudo | null;
 }) {
   const lic = doc.licitacao;
   const principal = lic ? lic.objeto : doc.titulo;
@@ -263,7 +291,20 @@ function Linha({
               </span>
             </>
           ) : null}
+
+          {/* Só pra quem entrou no lote prioritário da Etapa A — mostrar
+              "não extraído" nas outras ~18 mil linhas seria ruído, não sinal. */}
+          {!modoConteudo && indiceConteudo?.porUrl.has(doc.url) ? (
+            <>
+              <Separador />
+              <SeloConteudo status={statusConteudo(doc.url, indiceConteudo)} />
+            </>
+          ) : null}
         </p>
+
+        {modoConteudo && !compacto && indiceConteudo ? (
+          <TrechoConteudo doc={doc} indice={indiceConteudo} termo={termo} />
+        ) : null}
       </div>
 
       <a
@@ -329,6 +370,51 @@ function MetaLicitacao({ doc }: { doc: Doc }) {
         </>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Trecho do texto extraído em torno do termo buscado. Para documento
+ * sinalizado LGPD, não mostra o conteúdo real — só avisa que existe e manda
+ * abrir o original, do mesmo jeito que o resto do painel trata dado sensível.
+ */
+function TrechoConteudo({
+  doc,
+  indice,
+  termo,
+}: {
+  doc: Doc;
+  indice: IndiceConteudo;
+  termo: string;
+}) {
+  const entrada = indice.porUrl.get(doc.url);
+  if (!entrada) return null;
+
+  if (doc.sensivel) {
+    return (
+      <p className="mt-1 flex items-center gap-1 text-[11.5px] text-tinta-3 italic">
+        trecho oculto — dado pessoal sinalizado; abra o documento original
+      </p>
+    );
+  }
+
+  const trecho = gerarTrecho(entrada, indice, termo);
+  if (!trecho) return null;
+
+  return (
+    <p className="mt-1 line-clamp-1 text-[11.5px] leading-snug text-tinta-2">
+      <Destaque texto={trecho} termo={termo} />
+    </p>
+  );
+}
+
+/** "Não finja que tudo está buscável" — status honesto do texto, quando existe. */
+function SeloConteudo({ status }: { status: StatusConteudo }) {
+  const tom = status.tom === "indexado" ? "sucesso" : status.tom === "erro" ? "registro" : "neutro";
+  return (
+    <Chip tom={tom}>
+      {status.tom === "indexado" ? "texto indexado" : status.rotulo}
+    </Chip>
   );
 }
 

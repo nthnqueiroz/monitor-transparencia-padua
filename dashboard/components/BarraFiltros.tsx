@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Botao } from "./primitivos";
-import type { Categoria, Filtros } from "@/lib/tipos";
+import type { Categoria, Filtros, IndiceConteudo } from "@/lib/tipos";
 import { numero, semAcento } from "@/lib/texto";
 
 const NOME_CATEGORIA: Record<string, string> = {
@@ -50,6 +50,7 @@ interface Props {
   totalGeral: number;
   sensiveisNoResultado: number;
   temFiltro: boolean;
+  indiceConteudo: IndiceConteudo | null;
 }
 
 export function BarraFiltros({
@@ -65,6 +66,7 @@ export function BarraFiltros({
   totalGeral,
   sensiveisNoResultado,
   temFiltro,
+  indiceConteudo,
 }: Props) {
   return (
     <div className="sticky top-0 z-20 border-b border-linha bg-plano/95 backdrop-blur">
@@ -72,7 +74,14 @@ export function BarraFiltros({
         <div className="flex flex-wrap items-center gap-2">
           <CampoBusca
             valor={filtros.termo}
+            modoBusca={filtros.modoBusca}
             aoMudar={(termo) => aoMudar({ termo })}
+          />
+
+          <ModoBusca
+            modo={filtros.modoBusca}
+            indiceConteudo={indiceConteudo}
+            aoMudar={(modoBusca) => aoMudar({ modoBusca })}
           />
 
           <SeletorCategoria
@@ -128,6 +137,18 @@ export function BarraFiltros({
               {numero(sensiveisNoResultado)} com possível dado pessoal
             </span>
           ) : null}
+          {filtros.modoBusca === "conteudo" && indiceConteudo ? (
+            <span>
+              índice: {numero(indiceConteudo.resumo.comTexto)} de{" "}
+              {numero(indiceConteudo.resumo.total)} com texto
+              {indiceConteudo.resumo.precisaOcr > 0
+                ? ` · ${numero(indiceConteudo.resumo.precisaOcr)} aguardando OCR`
+                : ""}
+              {indiceConteudo.resumo.semSuporte > 0
+                ? ` · ${numero(indiceConteudo.resumo.semSuporte)} em formato não suportado`
+                : ""}
+            </span>
+          ) : null}
         </p>
       </div>
     </div>
@@ -136,9 +157,11 @@ export function BarraFiltros({
 
 function CampoBusca({
   valor,
+  modoBusca,
   aoMudar,
 }: {
   valor: string;
+  modoBusca: Filtros["modoBusca"];
   aoMudar: (v: string) => void;
 }) {
   const ref = useRef<HTMLInputElement>(null);
@@ -158,6 +181,11 @@ function CampoBusca({
     return () => window.removeEventListener("keydown", aoTeclar);
   }, []);
 
+  const rotulo =
+    modoBusca === "conteudo"
+      ? "Buscar no texto dos documentos indexados"
+      : "Buscar no título e na seção";
+
   return (
     <div className="relative min-w-[240px] flex-1 sm:max-w-md">
       <svg
@@ -176,8 +204,8 @@ function CampoBusca({
         type="search"
         value={valor}
         onChange={(e) => aoMudar(e.target.value)}
-        placeholder="Buscar no título e na seção"
-        aria-label="Buscar no título e na seção"
+        placeholder={rotulo}
+        aria-label={rotulo}
         className="w-full rounded border border-linha-forte bg-ficha py-1.5 pr-14 pl-8 text-[13px] text-tinta placeholder:text-tinta-3"
       />
       {!valor ? (
@@ -185,6 +213,57 @@ function CampoBusca({
           /
         </kbd>
       ) : null}
+    </div>
+  );
+}
+
+function ModoBusca({
+  modo,
+  indiceConteudo,
+  aoMudar,
+}: {
+  modo: Filtros["modoBusca"];
+  indiceConteudo: IndiceConteudo | null;
+  aoMudar: (m: Filtros["modoBusca"]) => void;
+}) {
+  const indisponivel = !indiceConteudo;
+
+  return (
+    <div
+      role="group"
+      aria-label="Buscar em título/seção ou no conteúdo"
+      className="flex overflow-hidden rounded border border-linha-forte"
+    >
+      <button
+        type="button"
+        aria-pressed={modo === "titulo"}
+        onClick={() => aoMudar("titulo")}
+        className={`px-2.5 py-1.5 text-[13px] transition-colors ${
+          modo === "titulo"
+            ? "bg-registro text-white"
+            : "bg-ficha text-tinta-2 hover:bg-ficha-alt"
+        }`}
+      >
+        Título/seção
+      </button>
+      <button
+        type="button"
+        aria-pressed={modo === "conteudo"}
+        onClick={() => aoMudar("conteudo")}
+        disabled={indisponivel}
+        title={
+          indisponivel
+            ? "Rode textos/extrair_conteudo.py e npm run sync-conteudo pra habilitar"
+            : `${numero(indiceConteudo.resumo.comTexto)} documentos com texto indexado`
+        }
+        className={`border-l border-linha-forte px-2.5 py-1.5 text-[13px] transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+          modo === "conteudo"
+            ? "bg-registro text-white"
+            : "bg-ficha text-tinta-2 hover:bg-ficha-alt"
+        }`}
+      >
+        Conteúdo
+      </button>
     </div>
   );
 }
@@ -197,15 +276,21 @@ function ChipsDeTema({
   aoMudar: (parcial: Partial<Filtros>) => void;
 }) {
   function aoClicar(tema: TemaDoLab) {
+    // Os chips varrem o inventário inteiro (18k docs); o modo conteúdo só
+    // enxerga o subconjunto indexado. Volta pro modo título pra não confundir
+    // "nada encontrado" com "esse tema não foi indexado ainda".
     if (tema.categoria) {
       const proximo = new Set(filtros.categorias);
       if (proximo.has(tema.categoria)) proximo.delete(tema.categoria);
       else proximo.add(tema.categoria);
-      aoMudar({ categorias: proximo });
+      aoMudar({ categorias: proximo, modoBusca: "titulo" });
       return;
     }
     if (tema.busca) {
-      aoMudar({ termo: filtros.termo === tema.busca ? "" : tema.busca });
+      aoMudar({
+        termo: filtros.termo === tema.busca ? "" : tema.busca,
+        modoBusca: "titulo",
+      });
     }
   }
 

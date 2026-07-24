@@ -7,10 +7,11 @@ import { MatrizDensidade } from "./MatrizDensidade";
 import { Recentes } from "./Recentes";
 import { RodapeTabela, TabelaDocumentos } from "./TabelaDocumentos";
 import { Ficha } from "./primitivos";
+import { carregarIndiceConteudo } from "@/lib/conteudo";
 import { carregarInventario } from "@/lib/dados";
 import { baixarCsv } from "@/lib/exportar";
 import { aplicarFiltros, filtrosVazios, temFiltroAtivo } from "@/lib/filtros";
-import type { Filtros, Inventario } from "@/lib/tipos";
+import type { Filtros, IndiceConteudo, Inventario } from "@/lib/tipos";
 import { numero } from "@/lib/texto";
 
 type Aba = "geral" | "documentos" | "recentes";
@@ -23,6 +24,7 @@ const ABAS: { chave: Aba; rotulo: string }[] = [
 
 export function Painel() {
   const [inventario, setInventario] = useState<Inventario | null>(null);
+  const [indiceConteudo, setIndiceConteudo] = useState<IndiceConteudo | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [aba, setAba] = useState<Aba>("geral");
   const [filtros, setFiltros] = useState<Filtros>(() => filtrosVazios(0, 0));
@@ -42,6 +44,17 @@ export function Painel() {
     return () => controle.abort();
   }, []);
 
+  // Índice de conteúdo é opcional — se ninguém rodou a Etapa A ainda, ou o
+  // fetch falhar por qualquer motivo, carregarIndiceConteudo devolve null e
+  // o painel segue normal, só sem a busca no conteúdo.
+  useEffect(() => {
+    const controle = new AbortController();
+    carregarIndiceConteudo(controle.signal).then((indice) => {
+      if (!controle.signal.aborted) setIndiceConteudo(indice);
+    });
+    return () => controle.abort();
+  }, []);
+
   // A busca roda sobre 18 mil linhas a cada tecla; o atraso curto evita
   // refiltrar no meio de uma palavra sem dar sensação de lentidão.
   useEffect(() => {
@@ -56,8 +69,8 @@ export function Painel() {
 
   const resultados = useMemo(() => {
     if (!inventario) return [];
-    return aplicarFiltros(inventario.docs, filtrosEfetivos);
-  }, [inventario, filtrosEfetivos]);
+    return aplicarFiltros(inventario.docs, filtrosEfetivos, indiceConteudo);
+  }, [inventario, filtrosEfetivos, indiceConteudo]);
 
   const sensiveisNoResultado = useMemo(
     () => resultados.reduce((s, d) => s + (d.sensivel ? 1 : 0), 0),
@@ -73,9 +86,14 @@ export function Painel() {
     setFiltros(filtrosVazios(inventario.anoMin, inventario.anoMax));
   }, [inventario]);
 
+  // Os três drill-downs abaixo (matriz, gráfico de seção, categoria) varrem
+  // o inventário inteiro; o modo conteúdo só enxerga o subconjunto indexado.
+  // Volta pro modo título pra não confundir "0 documentos" com "essa
+  // seção/ano não foi indexada ainda".
   const filtrarPorCelula = useCallback((secao: string, ano: number) => {
     setFiltros((atual) => ({
       ...atual,
+      modoBusca: "titulo",
       secoes: new Set([secao]),
       anoDe: ano,
       anoAte: ano,
@@ -85,12 +103,12 @@ export function Painel() {
   }, []);
 
   const filtrarPorSecao = useCallback((secao: string) => {
-    setFiltros((atual) => ({ ...atual, secoes: new Set([secao]) }));
+    setFiltros((atual) => ({ ...atual, modoBusca: "titulo", secoes: new Set([secao]) }));
     setAba("documentos");
   }, []);
 
   const filtrarPorCategoria = useCallback((categoria: string) => {
-    setFiltros((atual) => ({ ...atual, categorias: new Set([categoria]) }));
+    setFiltros((atual) => ({ ...atual, modoBusca: "titulo", categorias: new Set([categoria]) }));
     setAba("documentos");
   }, []);
 
@@ -120,6 +138,7 @@ export function Painel() {
         totalGeral={inventario.docs.length}
         sensiveisNoResultado={sensiveisNoResultado}
         temFiltro={temFiltro}
+        indiceConteudo={indiceConteudo}
       />
 
       <nav
@@ -179,7 +198,12 @@ export function Painel() {
 
         {aba === "documentos" ? (
           <Ficha>
-            <TabelaDocumentos docs={resultados} termo={termoAplicado} />
+            <TabelaDocumentos
+              docs={resultados}
+              termo={termoAplicado}
+              modoConteudo={filtros.modoBusca === "conteudo"}
+              indiceConteudo={indiceConteudo}
+            />
             {resultados.length ? <RodapeTabela total={resultados.length} /> : null}
           </Ficha>
         ) : null}
@@ -187,7 +211,7 @@ export function Painel() {
         {aba === "recentes" ? <Recentes docs={resultados} /> : null}
       </main>
 
-      <Rodape />
+      <Rodape indiceConteudo={indiceConteudo} />
     </div>
   );
 }
@@ -292,13 +316,15 @@ function Erro({ mensagem }: { mensagem: string }) {
   );
 }
 
-function Rodape() {
+function Rodape({ indiceConteudo }: { indiceConteudo: IndiceConteudo | null }) {
   return (
     <footer className="border-t border-linha bg-ficha">
       <p className="mx-auto max-w-[1400px] px-4 py-3 font-mono text-[10.5px] leading-relaxed text-tinta-3 lg:px-6">
-        Metadado e link — o texto dentro dos PDFs ainda não foi extraído. Fonte:
-        portal da transparência da Prefeitura de Santo Antônio de Pádua–RJ, via
-        monitor deste repositório.
+        {indiceConteudo
+          ? `Metadado e link para todos — texto extraído de ${numero(indiceConteudo.resumo.comTexto)} documentos (busca em "Conteúdo"); o resto ainda é só metadado.`
+          : "Metadado e link — o texto dentro dos PDFs ainda não foi extraído."}{" "}
+        Fonte: portal da transparência da Prefeitura de Santo Antônio de
+        Pádua–RJ, via monitor deste repositório.
       </p>
     </footer>
   );
