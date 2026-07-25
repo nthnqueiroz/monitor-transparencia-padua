@@ -60,6 +60,12 @@ REQUEST_DELAY = float(os.environ.get("REQUEST_DELAY", "0.4"))
 REQUEST_TIMEOUT = 30
 # Trava de segurança: máximo de páginas por seção (evita loop infinito).
 MAX_PAGES_PER_SECTION = int(os.environ.get("MAX_PAGES_PER_SECTION", "1500"))
+# Corte do titulo das linhas da tabela de licitacao. A linha inteira (objeto +
+# data + valor estimado + valor homologado + status) vem concatenada, e um corte
+# curto decapita justamente valor e status, que ficam no fim. Ajustavel por env.
+# ATENCAO: este numero esta ESPELHADO em dashboard/lib/dados.ts
+# (const CORTE_DO_MONITOR). Se mudar aqui, mude la tambem.
+CORTE_TITULO_LICITACAO = int(os.environ.get("CORTE_TITULO_LICITACAO", "600"))
 USER_AGENT = (
     "Mozilla/5.0 (compatible; MonitorTransparenciaPadua/2.0; "
     "monitoramento civico de documentos publicos)"
@@ -267,7 +273,7 @@ def crawl_licitacoes(session, max_pages, stats):
                 continue
             row = a.find_parent("tr")
             if row:
-                title = " ".join(row.get_text(" ", strip=True).split())[:200]
+                title = " ".join(row.get_text(" ", strip=True).split())[:CORTE_TITULO_LICITACAO]
             else:
                 title = a.get_text(strip=True)
             if not title:
