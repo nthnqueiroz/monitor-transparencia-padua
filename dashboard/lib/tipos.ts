@@ -13,6 +13,35 @@ export interface Licitacao {
   anoInferido: number | null;
 }
 
+/** Qual dos dois testes de implausibilidade reprovou o valor. */
+export type TipoMotivo = "teto-legal" | "teto-orcamentario";
+
+/** Um teste reprovado, com o teto que ele aplica e a explicação exibível. */
+export interface MotivoImplausivel {
+  tipo: TipoMotivo;
+  rotulo: string;
+  teto: number;
+  detalhe: string;
+}
+
+/**
+ * Leitura do valor de uma licitação sob a regra de implausibilidade.
+ * A lógica e o porquê de cada campo estão em lib/dinheiro.ts.
+ */
+export interface AvaliacaoValor {
+  /** O valor como o portal publicou. É este que o painel mostra primeiro. */
+  publicado: number;
+  /** `publicado` / 100, só quando algum teste reprovou. Inferência nossa, nunca dado da fonte. */
+  leituraProvavel: number | null;
+  implausivel: boolean;
+  motivos: MotivoImplausivel[];
+  /** Dividir por 100 zera todos os motivos: provável erro de publicação do portal. */
+  corrigePorEscala: boolean;
+  /** Continua implausível dividido por 100: incompatibilidade da própria licitação. */
+  sobreviveAEscala: boolean;
+  divergenciaEstimadoHomologado: boolean;
+}
+
 /** Motivo pelo qual um documento foi sinalizado como sensível (LGPD). */
 export interface MarcaSensivel {
   rotulo: string;
@@ -32,10 +61,12 @@ export interface Doc {
   anoEfetivo: number | null;
   /** Extensão do arquivo, quando a URL revela. */
   extensao: string | null;
-  /** O monitor trunca títulos em 200 caracteres. */
+  /** O título bate exatamente com um dos cortes do monitor (ver CORTES_DO_MONITOR). */
   truncado: boolean;
   sensivel: MarcaSensivel | null;
   licitacao: Licitacao | null;
+  /** Leitura do valor sob a regra de implausibilidade. Null quando não há valor publicado. */
+  valor: AvaliacaoValor | null;
   /** titulo + secao sem acento, minúsculo — usado pela busca. */
   chaveBusca: string;
 }
@@ -59,6 +90,8 @@ export interface Filtros {
   anoAte: number;
   /** Inclui documentos sem ano identificável no resultado. */
   incluirSemAno: boolean;
+  /** Deixa passar só licitação com valor reprovado na regra de implausibilidade. */
+  soImplausiveis: boolean;
 }
 
 /**

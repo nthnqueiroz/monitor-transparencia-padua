@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BarraFiltros } from "./BarraFiltros";
+import { Dinheiro } from "./Dinheiro";
 import { DocumentosPorAno, DocumentosPorSecretaria, ResumoPorCategoria } from "./Graficos";
 import { MatrizDensidade } from "./MatrizDensidade";
 import { Recentes } from "./Recentes";
@@ -107,6 +108,18 @@ export function Painel() {
     setAba("documentos");
   }, []);
 
+  // A ficha de dinheiro manda para a lista já recortada. Força categoria
+  // licitação porque a regra de implausibilidade só existe para licitação.
+  const filtrarImplausiveis = useCallback(() => {
+    setFiltros((atual) => ({
+      ...atual,
+      modoBusca: "titulo",
+      categorias: new Set(["licitacao"]),
+      soImplausiveis: true,
+    }));
+    setAba("documentos");
+  }, []);
+
   const filtrarPorCategoria = useCallback((categoria: string) => {
     setFiltros((atual) => ({ ...atual, modoBusca: "titulo", categorias: new Set([categoria]) }));
     setAba("documentos");
@@ -176,6 +189,7 @@ export function Painel() {
               anoMax={inventario.anoMax}
               aoSelecionar={filtrarPorCelula}
             />
+            <Dinheiro docs={resultados} aoFiltrarImplausiveis={filtrarImplausiveis} />
             <div className="grid gap-4 lg:grid-cols-3">
               <div className="lg:col-span-2">
                 <DocumentosPorAno

@@ -5,8 +5,8 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Chip, Destaque, SeloSensivel, Vazio } from "./primitivos";
 import { gerarTrecho, statusConteudo, type StatusConteudo } from "@/lib/conteudo";
 import { tomDoStatus } from "@/lib/paleta";
-import type { Doc, IndiceConteudo } from "@/lib/tipos";
-import { nomeMes, numero, real } from "@/lib/texto";
+import type { AvaliacaoValor, Doc, IndiceConteudo } from "@/lib/tipos";
+import { nomeMes, numero, real, realExato } from "@/lib/texto";
 
 type Ordem = "recente" | "antigo";
 type Densidade = "confortavel" | "compacto";
@@ -357,7 +357,12 @@ function MetaLicitacao({ doc }: { doc: Doc }) {
           <span>{lic.dataSessao}</span>
         </>
       ) : null}
-      {lic.valorEstimado ? (
+      {doc.valor ? (
+        <>
+          <Separador />
+          <ValorPublicado avaliacao={doc.valor} />
+        </>
+      ) : lic.valorEstimado ? (
         <>
           <Separador />
           <span className="text-tinta-2">{real(lic.valorEstimado)}</span>
@@ -415,6 +420,56 @@ function SeloConteudo({ status }: { status: StatusConteudo }) {
     <Chip tom={tom}>
       {status.tom === "indexado" ? "texto indexado" : status.rotulo}
     </Chip>
+  );
+}
+
+/**
+ * Valor da licitação sob a regra de implausibilidade (ver lib/dinheiro.ts).
+ *
+ * Ordem de exibição não é detalhe de layout, é a decisão do Nathan de
+ * 2026-07-24: o painel mostra PRIMEIRO o valor cru como o portal publicou, e
+ * só depois a leitura provável, sempre rotulada como inferência nossa. O dado
+ * da fonte nunca é substituído pelo nosso palpite.
+ *
+ * Cor: o selo usa o azul de registro, não o âmbar. O âmbar é a única cor
+ * quente da interface e está reservado ao selo de LGPD (regra do CLAUDE.md).
+ */
+function ValorPublicado({ avaliacao }: { avaliacao: AvaliacaoValor }) {
+  const { publicado, leituraProvavel, implausivel, motivos, corrigePorEscala } = avaliacao;
+
+  if (!implausivel) {
+    return <span className="text-tinta-2">{real(publicado)}</span>;
+  }
+
+  const explicacao = motivos.map((m) => m.detalhe).join(" ");
+
+  return (
+    <>
+      <span
+        className="text-tinta-2 underline decoration-dotted decoration-from-font"
+        title={explicacao}
+      >
+        {real(publicado)}
+      </span>
+      <Chip tom="registro">
+        {corrigePorEscala ? "valor implausível" : "incompatível com a modalidade"}
+      </Chip>
+      {leituraProvavel !== null ? (
+        <span
+          className="text-tinta-3 italic"
+          title={
+            corrigePorEscala
+              ? "Hipótese do Lab, não é dado do portal: o valor publicado parece " +
+                "estar 100x inflado por perda da vírgula decimal. Este é o valor " +
+                "dividido por 100, que passa nos dois testes."
+              : "Hipótese do Lab, não é dado do portal: mesmo dividido por 100 o " +
+                "valor continua incompatível com a modalidade declarada."
+          }
+        >
+          leitura provável {realExato(leituraProvavel)}
+        </span>
+      ) : null}
+    </>
   );
 }
 

@@ -1,4 +1,5 @@
 import Papa from "papaparse";
+import { avaliarValor } from "./dinheiro";
 import { extrairLicitacao } from "./licitacao";
 import { marcarSensivel } from "./lgpd";
 import type { Categoria, Doc, Inventario } from "./tipos";
@@ -11,8 +12,23 @@ import {
   semAcento,
 } from "./texto";
 
-/** O monitor corta o título nesse comprimento ao gerar o inventário. */
-const CORTE_DO_MONITOR = 200;
+/**
+ * Comprimentos em que o monitor corta o título da linha de licitação.
+ *
+ * ⚠️ ESPELHO de `CORTE_TITULO_LICITACAO` em `monitor.py`. Se mudar lá, mude aqui.
+ *
+ * A lista tem MAIS DE UM valor de propósito: o inventário é histórico e mistura
+ * gerações. Registros varridos antes de 2026-07-25 foram cortados em 200; a
+ * partir dali, em 600. Enquanto uma varredura `full` não reescrever os antigos,
+ * os dois cortes convivem no mesmo CSV, e o selo de "truncado" precisa
+ * reconhecer os dois. Ao aposentar um corte, remova o número daqui.
+ */
+const CORTES_DO_MONITOR = [200, 600] as const;
+
+/** Verdadeiro se o título bate exatamente com algum corte conhecido do monitor. */
+function tituloTruncado(titulo: string): boolean {
+  return CORTES_DO_MONITOR.some((corte) => titulo.length === corte);
+}
 
 interface LinhaCsv {
   categoria?: string;
@@ -103,9 +119,10 @@ export function montarInventario(linhas: LinhaCsv[]): Inventario {
       url,
       anoEfetivo,
       extensao: extensaoDaUrl(url),
-      truncado: titulo.length >= CORTE_DO_MONITOR,
+      truncado: tituloTruncado(titulo),
       sensivel,
       licitacao,
+      valor: avaliarValor(licitacao),
       // O objeto da licitação é mais buscável que o título-blob, mas o blob
       // também entra para não perder número de edital e status.
       chaveBusca: semAcento(`${titulo} ${secao}`),

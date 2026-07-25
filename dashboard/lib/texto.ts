@@ -99,6 +99,12 @@ const FORMATO_REAL = new Intl.NumberFormat("pt-BR", {
   currency: "BRL",
   maximumFractionDigits: 0,
 });
+const FORMATO_REAL_EXATO = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 
 export function numero(n: number): string {
   return FORMATO_INTEIRO.format(n);
@@ -106,6 +112,15 @@ export function numero(n: number): string {
 
 export function real(n: number | null): string {
   return n === null ? "—" : FORMATO_REAL.format(n);
+}
+
+/**
+ * Igual a `real`, mas com os centavos. A camada de dinheiro precisa deles:
+ * a hipótese da vírgula perdida (ver lib/dinheiro.ts) só fica legível quando
+ * os centavos aparecem, e teto legal citado sem centavos parece arredondado.
+ */
+export function realExato(n: number | null): string {
+  return n === null ? "—" : FORMATO_REAL_EXATO.format(n);
 }
 
 /** "R$1.184.760,00" → 1184760. Formato pt-BR: ponto milhar, vírgula decimal. */

@@ -10,8 +10,9 @@ import { anoValido, semAcento, valorParaNumero } from "./texto";
  *
  * A leitura é feita de trás para frente (status → valores → data), que é a
  * parte mais regular, e a modalidade serve de pivô entre cabeçalho e objeto.
- * O monitor corta o título em 200 caracteres, então 302 registros perdem o
- * fim da linha — nesses o parser devolve o que conseguiu e deixa o resto nulo.
+ * O monitor corta o título em CORTE_TITULO_LICITACAO caracteres (hoje 600; era
+ * 200 até 2026-07-25). Registro cortado perde o fim da linha, e nesses o parser
+ * devolve o que conseguiu e deixa o resto nulo.
  */
 
 const STATUS = [

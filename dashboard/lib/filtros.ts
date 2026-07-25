@@ -10,6 +10,7 @@ export function filtrosVazios(anoDe: number, anoAte: number): Filtros {
     anoDe,
     anoAte,
     incluirSemAno: true,
+    soImplausiveis: false,
   };
 }
 
@@ -21,7 +22,8 @@ export function temFiltroAtivo(f: Filtros, anoMin: number, anoMax: number): bool
     f.secoes.size > 0 ||
     f.anoDe !== anoMin ||
     f.anoAte !== anoMax ||
-    !f.incluirSemAno
+    !f.incluirSemAno ||
+    f.soImplausiveis
   );
 }
 
@@ -49,6 +51,8 @@ export function aplicarFiltros(
   for (const doc of docs) {
     if (filtraCategoria && !f.categorias.has(doc.categoria)) continue;
     if (filtraSecao && !f.secoes.has(doc.secao)) continue;
+    // Recorte de pauta: só o que a regra de implausibilidade reprovou.
+    if (f.soImplausiveis && !doc.valor?.implausivel) continue;
 
     if (doc.anoEfetivo === null) {
       if (!f.incluirSemAno) continue;

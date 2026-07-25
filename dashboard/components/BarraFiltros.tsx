@@ -105,6 +105,19 @@ export function BarraFiltros({
             aoMudar={aoMudar}
           />
 
+          <label
+            className="flex items-center gap-1.5 rounded border border-linha-forte bg-ficha px-2 py-[5px] font-mono text-[11px] text-tinta-3"
+            title="Só licitação com valor reprovado na regra de implausibilidade (teto da modalidade ou teto orçamentário)"
+          >
+            <input
+              type="checkbox"
+              checked={filtros.soImplausiveis}
+              onChange={(e) => aoMudar({ soImplausiveis: e.target.checked })}
+              className="accent-[#143E7A]"
+            />
+            valor implausível
+          </label>
+
           <div className="ml-auto flex items-center gap-2">
             {temFiltro ? (
               <Botao onClick={aoLimpar} titulo="Remove todos os filtros">
