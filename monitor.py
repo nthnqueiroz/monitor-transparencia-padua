@@ -3,7 +3,7 @@
 """
 Monitor do Portal da Transparência da Prefeitura de Santo Antônio de Pádua–RJ.
 
-COBERTURA (v2 — completa):
+COBERTURA (v2, completa):
   - Todas as seções/secretarias em /portal/arquivo/{id}, entrando RECURSIVAMENTE
     nas pastas de ano e de mês (ano -> mês -> documentos).
   - Licitações (/licitacao) com paginação (?page=N).
@@ -31,6 +31,7 @@ import sys
 import csv
 import json
 import time
+import random
 import smtplib
 import datetime
 from email.mime.text import MIMEText
@@ -48,6 +49,7 @@ BASE = "https://santoantoniodepadua.rj.gov.br"
 INDEX_URL = f"{BASE}/portal/transparencia"
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), "state", "seen.json")
+FAILURES_FILE = os.path.join(os.path.dirname(__file__), "state", "falhas.json")
 INVENTORY_CSV = os.path.join(os.path.dirname(__file__), "inventory.csv")
 INVENTORY_JSON = os.path.join(os.path.dirname(__file__), "inventory.json")
 
@@ -70,6 +72,18 @@ USER_AGENT = (
     "Mozilla/5.0 (compatible; MonitorTransparenciaPadua/2.0; "
     "monitoramento civico de documentos publicos)"
 )
+
+# --- Retentativas ----------------------------------------------------------
+# O portal da prefeitura roda em hospedagem que devolve 5xx sob rajada de
+# requisicoes, tipicamente HTTP 507 (Insufficient Storage). Sao falhas
+# transitorias: a mesma URL costuma responder 200 poucos segundos depois.
+# Sem retentativa, uma pasta que falha vira "0 arquivos" e o monitor conclui,
+# em silencio, que nao ha documento novo.
+RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504, 507, 508, 509}
+FETCH_RETRIES = int(os.environ.get("FETCH_RETRIES", "3"))
+FETCH_BACKOFF = (2.0, 6.0, 15.0)
+# Pausa antes da 2a passada, para o servidor se recuperar.
+RETRY_PASS_PAUSE = float(os.environ.get("RETRY_PASS_PAUSE", "45"))
 
 FILE_EXT = re.compile(
     r"\.(pdf|docx?|xlsx?|pptx?|odt|ods|csv|txt|zip|rar|7z|png|jpe?g|gif)$", re.I
@@ -117,19 +131,75 @@ def make_session():
     return s
 
 
-def fetch(session, url):
-    """Baixa uma URL. Retorna (html_text, ok). Nunca levanta exceção."""
+def _retry_after(response):
+    """Segundos pedidos pelo header Retry-After, se houver e fizer sentido."""
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
     try:
-        r = session.get(url, timeout=REQUEST_TIMEOUT)
-        if r.status_code == 200:
-            return r.text, True
-        if r.status_code == 404:
-            return "", True  # 404 é normal (ano/mês inexistente)
-        print(f"  [aviso] {url} -> HTTP {r.status_code}")
-        return "", False
-    except requests.RequestException as e:
-        print(f"  [erro] falha ao acessar {url}: {e}")
-        return "", False
+        return max(1.0, min(120.0, float(raw.strip())))
+    except (TypeError, ValueError):
+        return None
+
+
+def _record_failure(stats, url, reason):
+    if stats is None:
+        return
+    rec = stats.setdefault("failed", {}).setdefault(url, {"url": url})
+    rec["reason"] = reason
+
+
+def _clear_failure(stats, url):
+    if stats is not None:
+        stats.get("failed", {}).pop(url, None)
+
+
+def _tag_failure(stats, url, **info):
+    """Anexa contexto (secao, tipo) ao registro de falha, para a 2a passada."""
+    if stats is None:
+        return
+    rec = stats.get("failed", {}).get(url)
+    if rec is not None:
+        rec.update(info)
+
+
+def fetch(session, url, stats=None):
+    """Baixa uma URL, com retentativa em erro transitorio.
+
+    Retorna (html_text, ok). Nunca levanta exceção. Quando a URL falha em
+    todas as tentativas, registra em stats["failed"] para a segunda passada.
+    """
+    motivo = "sem resposta"
+    for tentativa in range(FETCH_RETRIES + 1):
+        try:
+            r = session.get(url, timeout=REQUEST_TIMEOUT)
+            if r.status_code == 200:
+                _clear_failure(stats, url)
+                return r.text, True
+            if r.status_code == 404:
+                _clear_failure(stats, url)
+                return "", True  # 404 é normal (ano/mês inexistente)
+            motivo = f"HTTP {r.status_code}"
+            retentavel = r.status_code in RETRY_STATUS
+            espera = _retry_after(r)
+        except requests.RequestException as e:
+            motivo = f"excecao: {e}"
+            retentavel = True
+            espera = None
+
+        if not retentavel or tentativa >= FETCH_RETRIES:
+            break
+
+        if espera is None:
+            espera = FETCH_BACKOFF[min(tentativa, len(FETCH_BACKOFF) - 1)]
+        espera += random.uniform(0, 1.5)
+        print(f"  [retry {tentativa + 1}/{FETCH_RETRIES}] {url} -> {motivo}; "
+              f"nova tentativa em {espera:.1f}s")
+        time.sleep(espera)
+
+    print(f"  [falha] {url} -> {motivo} (apos {FETCH_RETRIES + 1} tentativa(s))")
+    _record_failure(stats, url, motivo)
+    return "", False
 
 
 def parse_links(text, base_url):
@@ -194,14 +264,17 @@ def discover_sections(session):
 # Crawlers
 # ---------------------------------------------------------------------------
 
-def crawl_arquivo_section(session, sid, name, years_allowed, stats):
+def crawl_arquivo_section(session, sid, name, years_allowed, stats, start_urls=None):
     """Crawl recursivo dentro de /portal/arquivo/{sid}: entra em anos e meses
-    e coleta todos os arquivos. years_allowed=None => todos os anos."""
+    e coleta todos os arquivos. years_allowed=None => todos os anos.
+
+    start_urls permite retomar o crawl a partir de pastas especificas (usado
+    pela segunda passada, que reprocessa so o que falhou)."""
     docs = {}
     prefix = f"/portal/arquivo/{sid}"
     root = BASE + prefix
-    queue = [root]
-    enqueued = {root}
+    queue = list(start_urls) if start_urls else [root]
+    enqueued = set(queue)
     visited = set()
     pages = 0
 
@@ -211,11 +284,17 @@ def crawl_arquivo_section(session, sid, name, years_allowed, stats):
         if base in visited:
             continue
         visited.add(base)
-        text, ok = fetch(session, url)
+        text, ok = fetch(session, url, stats)
         pages += 1
         stats["pages"] += 1
         time.sleep(REQUEST_DELAY)
-        if not ok or not text:
+        if not ok:
+            # Falha de servidor nao e pasta vazia. Guarda o contexto para a
+            # segunda passada saber em qual secao esta URL precisa voltar.
+            _tag_failure(stats, url, kind="arquivo", sid=sid, section=name,
+                         is_root=(base == root))
+            continue
+        if not text:
             continue
 
         for abs_url, atext, _ in parse_links(text, url):
@@ -255,10 +334,16 @@ def crawl_licitacoes(session, max_pages, stats):
     items = {}
     for page in range(1, max_pages + 1):
         url = f"{BASE}/licitacao?page={page}"
-        text, ok = fetch(session, url)
+        text, ok = fetch(session, url, stats)
         stats["pages"] += 1
         time.sleep(REQUEST_DELAY)
-        if not ok or not text:
+        if not ok:
+            # Erro de servidor nao significa fim da lista: segue para a
+            # proxima pagina e deixa a 2a passada refazer esta.
+            _tag_failure(stats, url, kind="licitacao", section="LICITACOES",
+                         page=page)
+            continue
+        if not text:
             break
         found_here = 0
         soup = BeautifulSoup(text, "html.parser")
@@ -292,10 +377,13 @@ def crawl_licitacoes(session, max_pages, stats):
 def crawl_special(session, name, url, stats):
     """Extrai arquivos anexados de uma página avulsa (sem recursão profunda)."""
     docs = {}
-    text, ok = fetch(session, url)
+    text, ok = fetch(session, url, stats)
     stats["pages"] += 1
     time.sleep(REQUEST_DELAY)
-    if not ok or not text:
+    if not ok:
+        _tag_failure(stats, url, kind="pagina", section=name)
+        return docs
+    if not text:
         return docs
     for abs_url, atext, _ in parse_links(text, url):
         if is_file(abs_url):
@@ -309,7 +397,7 @@ def crawl_special(session, name, url, stats):
 
 def scan(session, sections, mode):
     found = {}
-    stats = {"pages": 0, "sections_ok": 0, "sections_fail": 0}
+    stats = {"pages": 0, "sections_ok": 0, "sections_fail": 0, "failed": {}}
     years_allowed = None if mode == "full" else set(RECENT_YEARS)
 
     for sid, name in sorted(sections.items()):
@@ -340,6 +428,69 @@ def scan(session, sections, mode):
     return found, stats
 
 
+def retry_failures(session, sections, mode, stats, found):
+    """Segunda passada: tenta de novo, com calma, so as URLs que falharam.
+
+    Retoma o crawl a partir de cada pasta que nao respondeu, entao subpastas
+    que existiam abaixo dela tambem sao alcancadas. O que falhar de novo fica
+    registrado em stats["failed"] e vira aviso de varredura parcial."""
+    pendentes = list(stats.get("failed", {}).values())
+    if not pendentes:
+        return
+
+    print(f"\n2a passada: {len(pendentes)} endereco(s) sem resposta. "
+          f"Descansando {RETRY_PASS_PAUSE:.0f}s antes de tentar de novo.")
+    time.sleep(RETRY_PASS_PAUSE)
+    stats["failed"] = {}
+    years_allowed = None if mode == "full" else set(RECENT_YEARS)
+
+    por_secao = {}
+    avulsas = []
+    for rec in pendentes:
+        if rec.get("kind") == "arquivo" and rec.get("sid") is not None:
+            por_secao.setdefault(rec["sid"], []).append(rec["url"])
+        else:
+            avulsas.append(rec)
+
+    recuperados = 0
+    for sid, urls in sorted(por_secao.items()):
+        name = sections.get(sid, f"SECAO {sid}")
+        d = crawl_arquivo_section(session, sid, name, years_allowed, stats,
+                                  start_urls=urls)
+        novos = [u for u in d if u not in found]
+        found.update(d)
+        if novos:
+            recuperados += len(novos)
+            print(f"  [recuperado] secao {sid} {name}: +{len(novos)} arquivo(s)")
+
+    refazer_licitacao = False
+    for rec in avulsas:
+        if rec.get("kind") == "pagina":
+            sp = crawl_special(session, rec.get("section", "PAGINA"),
+                               rec["url"], stats)
+            novos = [u for u in sp if u not in found]
+            found.update(sp)
+            recuperados += len(novos)
+        elif rec.get("kind") == "licitacao":
+            refazer_licitacao = True
+
+    if refazer_licitacao and env_bool("LICITACOES_ENABLED", True):
+        if mode == "full":
+            maxp = int(os.environ.get("LICITACOES_MAX_PAGES", "200"))
+        else:
+            maxp = int(os.environ.get("LICITACOES_RECENT_PAGES", "3"))
+        lic = crawl_licitacoes(session, maxp, stats)
+        novos = [u for u in lic if u not in found]
+        found.update(lic)
+        recuperados += len(novos)
+        if novos:
+            print(f"  [recuperado] licitacoes: +{len(novos)} item(ns)")
+
+    restantes = len(stats.get("failed", {}))
+    print(f"2a passada concluida: {recuperados} item(ns) recuperado(s) | "
+          f"{restantes} endereco(s) ainda sem resposta.")
+
+
 # ---------------------------------------------------------------------------
 # Estado + inventário
 # ---------------------------------------------------------------------------
@@ -362,6 +513,51 @@ def save_state(state):
     state["last_run_utc"] = NOW_ISO
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def save_failures(stats):
+    """Grava state/falhas.json com o que ficou sem resposta neste run."""
+    falhas = sorted(stats.get("failed", {}).values(), key=lambda r: r["url"])
+    os.makedirs(os.path.dirname(FAILURES_FILE), exist_ok=True)
+    with open(FAILURES_FILE, "w", encoding="utf-8") as f:
+        json.dump({"run_utc": NOW_ISO, "total": len(falhas), "urls": falhas},
+                  f, ensure_ascii=False, indent=2)
+
+
+def resumo_falhas(stats):
+    """Texto de aviso de varredura parcial, ou None se o run foi completo."""
+    falhas = stats.get("failed", {})
+    if not falhas:
+        return None
+    registros = sorted(falhas.values(), key=lambda r: r["url"])
+    secoes = sorted({str(r.get("section") or "?") for r in registros})
+    raizes = sorted({f"{r.get('section')} (secao {r.get('sid')})"
+                     for r in registros if r.get("is_root")})
+
+    linhas = [
+        f"ATENCAO: varredura PARCIAL. {len(registros)} endereco(s) do portal "
+        "nao responderam nem apos as retentativas, entao essas pastas NAO "
+        "foram verificadas neste run.",
+        "",
+        "Secoes afetadas: " + ", ".join(secoes),
+    ]
+    if raizes:
+        linhas += [
+            "",
+            "Secoes que nao carregaram nem a pagina inicial (nenhum documento "
+            "delas foi checado):",
+        ]
+        linhas += [f"- {x}" for x in raizes]
+    linhas += ["", "Enderecos:"]
+    linhas += [f"- {r['url']} ({r.get('reason', 'sem resposta')})"
+               for r in registros]
+    linhas += [
+        "",
+        "Causa provavel: instabilidade do servidor da prefeitura (HTTP 507 "
+        "aparece quando a hospedagem fica sem espaco ou recurso). O proximo "
+        "run tenta essas pastas de novo.",
+    ]
+    return "\n".join(linhas)
 
 
 def write_inventory(documents):
@@ -491,7 +687,7 @@ def health_check(found, stats, state):
         return False, (
             "ALERTA: o monitor acessou o site mas nao encontrou NENHUM documento, "
             f"sendo que na ultima vez havia {prev_count}. Provavel mudanca de "
-            "estrutura do portal — o script precisa de ajuste."
+            "estrutura do portal: o script precisa de ajuste."
         )
     return True, None
 
@@ -512,8 +708,18 @@ def main():
           f"anos: {'TODOS' if mode == 'full' else sorted(RECENT_YEARS)}")
 
     found, stats = scan(session, sections, mode)
-    print(f"\nResumo: paginas={stats['pages']} | secoes ok={stats['sections_ok']} "
-          f"| falhas={stats['sections_fail']} | documentos encontrados={len(found)}")
+
+    if env_bool("RETRY_PASS_ENABLED", True):
+        retry_failures(session, sections, mode, stats, found)
+
+    falhas = stats.get("failed", {})
+    print(f"\nResumo: paginas={stats['pages']} "
+          f"| secoes com documentos={stats['sections_ok']} "
+          f"| secoes sem documentos={stats['sections_fail']} "
+          f"| enderecos sem resposta={len(falhas)} "
+          f"| documentos encontrados={len(found)}")
+    save_failures(stats)
+    aviso_parcial = resumo_falhas(stats)
 
     state = load_state()
 
@@ -533,6 +739,8 @@ def main():
             f"documentos. A partir de agora voce sera avisado apenas quando surgir "
             "documento NOVO."
         )
+        if aviso_parcial:
+            msg = msg + "\n\n" + aviso_parcial
         print(msg)
         notify("[Transparencia Padua] Monitor ativado", msg)
         return 0
@@ -547,12 +755,23 @@ def main():
     write_inventory(merged)
 
     if not new_docs:
-        print("Nenhum documento novo.")
+        if aviso_parcial:
+            # Sem novidade NAS PASTAS QUE CARREGARAM. Nao e a mesma coisa que
+            # "nenhum documento novo", e nao pode ser reportado como se fosse.
+            print(aviso_parcial)
+            print("Nenhum documento novo entre as pastas que responderam.")
+            if env_bool("PARTIAL_ALERT_ENABLED", True):
+                notify("[Transparencia Padua] Varredura parcial", aviso_parcial)
+        else:
+            print("Nenhum documento novo.")
         return 0
 
     new_docs.sort(key=lambda x: (x[1]["section"], str(x[1].get("year") or ""), x[1]["title"]))
     body = format_new_docs(new_docs)
     subject = f"[Transparencia Padua] {len(new_docs)} documento(s) novo(s)"
+    if aviso_parcial:
+        subject += " (varredura parcial)"
+        body = body + "\n\n" + aviso_parcial
     print(body)
     notify(subject, body)
     return 0

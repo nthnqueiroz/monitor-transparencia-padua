@@ -1,12 +1,12 @@
-# Monitor do Portal da Transparência — Santo Antônio de Pádua–RJ
+# Monitor do Portal da Transparência: Santo Antônio de Pádua-RJ
 
 Avisa por **e-mail** e **WhatsApp** sempre que um **documento novo** for publicado
 em qualquer uma das seções/secretarias do portal da transparência da prefeitura.
 
-- Roda sozinho **1x por dia** (08h no horário de Brasília) no **GitHub Actions** — grátis, sem servidor.
+- Roda sozinho **1x por dia** (08h no horário de Brasília) no **GitHub Actions**, grátis, sem servidor.
 - Varre **todas as seções** (auto-descoberta + lista fixa de 34).
 - Guarda o histórico do que já viu em `state/seen.json` (commitado no próprio repo).
-- No **primeiro run** só registra a "baseline" — não te enche de alerta com tudo que já existe.
+- No **primeiro run** só registra a "baseline", então não te enche de alerta com tudo que já existe.
 - Se o **site cair ou mudar de estrutura**, ele te avisa disso em vez de ficar mudo.
 
 ---
@@ -42,7 +42,7 @@ O Gmail não deixa usar sua senha normal em scripts. Você precisa de uma **App 
 3. Crie uma senha de app (nome livre, ex.: "monitor padua").
 4. Copie os **16 caracteres** gerados (sem espaços). É isso que vai em `SMTP_PASS`.
 
-### 3. Ativar o WhatsApp (CallMeBot — grátis)
+### 3. Ativar o WhatsApp (CallMeBot, grátis)
 
 O CallMeBot manda mensagem no **seu próprio** WhatsApp com uma chamada simples:
 
@@ -53,7 +53,7 @@ O CallMeBot manda mensagem no **seu próprio** WhatsApp com uma chamada simples:
    - Site oficial das instruções: https://www.callmebot.com/blog/free-api-whatsapp-messages/
 4. Seu telefone no formato internacional, ex.: `+5522999998888`.
 
-> Se um dia quiser trocar por Telegram (mais robusto que o CallMeBot), me avisa que eu adapto — é meia dúzia de linhas.
+> Se um dia quiser trocar por Telegram (mais robusto que o CallMeBot), me avisa que eu adapto, é meia dúzia de linhas.
 
 ### 4. Cadastrar as credenciais no GitHub
 
@@ -111,8 +111,8 @@ export CALLMEBOT_APIKEY=123456
 python monitor.py
 ```
 
-Para testar sem mandar nada, deixe `EMAIL_ENABLED=false` e `WHATSAPP_ENABLED=false`
-— ele só imprime na tela o que encontrou.
+Para testar sem mandar nada, deixe `EMAIL_ENABLED=false` e `WHATSAPP_ENABLED=false`.
+Ele só imprime na tela o que encontrou.
 
 ---
 
@@ -120,7 +120,7 @@ Para testar sem mandar nada, deixe `EMAIL_ENABLED=false` e `WHATSAPP_ENABLED=fal
 
 - **Frequência:** edite o `cron` em `.github/workflows/monitor.yml`.
   Ex.: de hora em hora → `"0 * * * *"`; a cada 6h → `"0 */6 * * *"`.
-  (Cron do GitHub é sempre em **UTC** — Brasília é UTC-3.)
+  (Cron do GitHub é sempre em **UTC**, e Brasília é UTC-3.)
 - **Anos monitorados:** a variável `YEARS` no `monitor.py` (padrão: ano atual + anterior).
 - **Só algumas seções:** edite/reduza o dicionário `SECTIONS` no `monitor.py`.
 - **Trocar WhatsApp por Telegram/e-mail-só:** me chama que eu adapto.
@@ -129,6 +129,20 @@ Para testar sem mandar nada, deixe `EMAIL_ENABLED=false` e `WHATSAPP_ENABLED=fal
 
 ## Manutenção e resiliência
 
+- **Servidor da prefeitura instável (HTTP 507 e outros 5xx):** o portal devolve
+  `507 Insufficient Storage` quando a hospedagem dele fica sem recurso, em geral
+  sob rajada de requisições. Cada endereço é tentado até 4 vezes com espera
+  crescente (2s, 6s, 15s, mais um jitter) e, no fim do run, há uma segunda
+  passada só nos endereços que continuaram falhando. O que ainda assim não
+  responder vai para `state/falhas.json` e dispara um aviso de **varredura
+  parcial**, para você nunca receber um "nenhum documento novo" que na verdade
+  significa "não consegui olhar".
+
+  Variáveis: `FETCH_RETRIES` (padrão 3 retentativas além da primeira),
+  `RETRY_PASS_ENABLED` (padrão true), `RETRY_PASS_PAUSE` (padrão 45s de descanso
+  antes da segunda passada), `PARTIAL_ALERT_ENABLED` (padrão true; deixe false
+  para registrar as falhas sem notificar) e `REQUEST_DELAY` (padrão 0.4s entre
+  requisições; suba para 1.0 se o portal andar muito instável).
 - **Site fora do ar:** o script detecta que nenhuma seção respondeu e te avisa,
   sem apagar o histórico. No próximo run ele retoma.
 - **Prefeitura muda o layout:** se ele acessar o site mas não achar mais nenhum
